@@ -61,6 +61,12 @@ print("[SERVER] Waiting for client...")
 conn, addr = server.accept()
 
 print(f"[SERVER] Client connected: {addr}")
+expected_sequence = None
+
+packets_received = 0
+packets_missing = 0
+packets_out_of_order = 0
+invalid_packets = 0
 
 buffer = ""
 
@@ -81,7 +87,36 @@ while True:
 
         try:
             packet = parse_sensor_message(message)
+            packets_received += 1
 
+            sequence = packet["sequence"]
+
+            if expected_sequence is None:
+                expected_sequence = sequence + 1
+
+            elif sequence == expected_sequence:
+                expected_sequence += 1
+
+            elif sequence > expected_sequence:
+                missing = sequence - expected_sequence
+                packets_missing += missing
+
+                print(
+                    f"[WARNING] Missing {missing} packet(s): "
+                    f"expected seq={expected_sequence}, "
+                    f"received seq={sequence}"
+                )
+
+                expected_sequence = sequence + 1
+
+            else:
+                packets_out_of_order += 1
+
+                print(
+                    f"[WARNING] Out-of-order packet: "
+                    f"expected seq={expected_sequence}, "
+                    f"received seq={sequence}"
+                )
             print(
                 f"[SENSOR] "
                 f"seq={packet['sequence']} "
@@ -92,8 +127,19 @@ while True:
                 f"{packet['acc_z']:.2f}"
                 f")"
             )
+            if packets_received % 100 == 0:
+                print()
+                print("========== COMMS STATS ==========")
+                print(f"Received:     {packets_received}")
+                print(f"Missing:      {packets_missing}")
+                print(f"Out of order: {packets_out_of_order}")
+                print(f"Invalid:      {invalid_packets}")
+                print(f"Last seq:     {sequence}")
+                print("=================================")
+                print()
 
         except ValueError as error:
+            invalid_packets += 1
             print(f"[INVALID PACKET] {error}")
 
 conn.close()

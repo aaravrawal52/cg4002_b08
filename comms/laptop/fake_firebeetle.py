@@ -53,7 +53,6 @@ try:
         )
 
         sock.sendall(message.encode())
-
         print("[SENT]", message.strip())
 
         sequence += 1

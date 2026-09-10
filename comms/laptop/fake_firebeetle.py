@@ -5,7 +5,14 @@ import random
 HOST = "127.0.0.1"
 PORT = 5001
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+DEVICE_ID = "GLOVE_01"
+PROTOCOL_VERSION = 1
+
+
+sock = socket.socket(
+    socket.AF_INET,
+    socket.SOCK_STREAM
+)
 
 print("[CLIENT] Connecting...")
 
@@ -13,10 +20,72 @@ sock.connect((HOST, PORT))
 
 print("[CLIENT] Connected")
 
+
+# --------------------------------
+# HANDSHAKE
+# --------------------------------
+
+hello_message = (
+    f"HELLO,"
+    f"{DEVICE_ID},"
+    f"{PROTOCOL_VERSION}\n"
+)
+
+print(
+    f"[CLIENT] Sending HELLO "
+    f"device={DEVICE_ID} "
+    f"version={PROTOCOL_VERSION}"
+)
+
+sock.sendall(hello_message.encode())
+
+
+# Wait for ACK from Ultra96
+
+response_buffer = ""
+
+while "\n" not in response_buffer:
+    data = sock.recv(1024)
+
+    if not data:
+        raise ConnectionError(
+            "Server disconnected during handshake"
+        )
+
+    response_buffer += data.decode()
+
+
+response, response_buffer = response_buffer.split("\n", 1)
+
+parts = response.split(",")
+
+if len(parts) != 2 or parts[0] != "ACK":
+    raise RuntimeError(
+        f"Expected ACK, received: {response}"
+    )
+
+
+ack_device_id = parts[1]
+
+if ack_device_id != DEVICE_ID:
+    raise RuntimeError(
+        f"ACK device mismatch: {ack_device_id}"
+    )
+
+
+print(
+    f"[CLIENT] Handshake successful. "
+    f"ACK received for {DEVICE_ID}"
+)
+
+
+# --------------------------------
+# SENSOR STREAM
+# --------------------------------
+
 sequence = 0
 
 try:
-
     while True:
 
         timestamp = int(time.monotonic() * 1000)
@@ -53,17 +122,18 @@ try:
         )
 
         sock.sendall(message.encode())
-        print("[SENT]", message.strip())
+
+        if sequence % 100 == 0:
+            print(
+                f"[CLIENT] Sent sensor seq={sequence}"
+            )
 
         sequence += 1
 
         time.sleep(0.01)
 
 except KeyboardInterrupt:
-
     print("\n[CLIENT] Stopping")
 
 finally:
-
     sock.close()
-

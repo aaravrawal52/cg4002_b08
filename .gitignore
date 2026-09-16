@@ -1,0 +1,8 @@
+.claude/
+CLAUDE.md
+Vitis-AI/
+__pycache__/
+.venv
+
+dummy_dataset/
+preprocessed_data/

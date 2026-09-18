@@ -78,7 +78,7 @@ def segment_windows(data_path, window_size, realtime=True):
 
 if __name__ == "__main__":
     data_path = 'dummy_dataset/unittest_raw.csv'
-    window_size = 4
+    window_size = 50
     for window in segment_windows(data_path, window_size):
         print(window)
     # for row in stream_rows('dummy_dataset/unittest_raw.csv'):

@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch import nn
 from torch import optim
+from datetime import datetime
 
 class NeuralNetwork(nn.Module):
     def __init__(self):
@@ -33,6 +34,11 @@ if __name__ == "__main__":
     X_train = torch.from_numpy(X_train).float()
     y_train = torch.from_numpy(y_train).long()
 
+    X_val, y_val = val_data['X'], val_data['y']
+    X_val = np.transpose(X_val, axes = (0,2,1))
+    X_val = torch.from_numpy(X_val).float()
+    y_val = torch.from_numpy(y_val).long()
+
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using {device} device")
     model = NeuralNetwork().to(device)
@@ -40,15 +46,21 @@ if __name__ == "__main__":
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     train_dataloader = DataLoader(train_dataset, batch_size=5, shuffle=True)
 
-    # val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
-    # val_dataloader = DataLoader(val_dataset, batch_size=5, shuffle=True)
+    val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
+    val_dataloader = DataLoader(val_dataset, batch_size=5, shuffle=True)
 
     num_epochs=10
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     loss_criterion = nn.CrossEntropyLoss()
+    best_vloss = 1000
+    epoch_number = 1
+    best_epoch = 1
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    best_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     for epoch in range(num_epochs):
         running_loss = 0
+        running_vloss = 0
         print(f"Epoch [{epoch + 1}/{num_epochs}]")
         
         
@@ -64,5 +76,23 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+        
+        with torch.no_grad():
+            for batch_vinput, batch_vlabel in val_dataloader:
+                voutputs = model(batch_vinput)
+                vloss = loss_criterion(voutputs, batch_vlabel)
+                running_vloss += vloss.item()
         avg_training_loss = running_loss / len(train_dataloader)
-        print ("Epoch ", epoch, "loss: ", avg_training_loss)
+        avg_vloss = running_vloss / len(val_dataloader)
+        print ("training loss: ", avg_training_loss)
+        print ("validation loss: ", avg_vloss)
+
+        # Track best performance, and save the model's state
+        if avg_vloss < best_vloss:
+            best_vloss = avg_vloss
+            best_epoch = epoch_number
+            best_timestamp_ = timestamp
+        epoch_number += 1
+
+    model_path = f'models/model_{best_timestamp}_{best_epoch}'
+    torch.save(model.state_dict(), model_path)

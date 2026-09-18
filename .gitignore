@@ -6,3 +6,4 @@ __pycache__/
 
 dummy_dataset/
 preprocessed_data/
+models/

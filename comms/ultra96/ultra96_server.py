@@ -10,9 +10,9 @@ SUPPORTED_PROTOCOL_VERSION = 1
 def parse_sensor_message(message):
     parts = message.split(",")
 
-    if len(parts) != 14:
+    if len(parts) != 11:
         raise ValueError(
-            f"Expected 14 fields, got {len(parts)}"
+            f"Expected 11 fields, got {len(parts)}"
         )
 
     if parts[0] != "SENSOR":
@@ -20,27 +20,23 @@ def parse_sensor_message(message):
             f"Unknown packet type: {parts[0]}"
         )
 
-    packet = {
+    return {
         "type": parts[0],
+
         "sequence": int(parts[1]),
         "timestamp": int(parts[2]),
 
-        "acc_x": float(parts[3]),
-        "acc_y": float(parts[4]),
-        "acc_z": float(parts[5]),
+        "ax": float(parts[3]),
+        "ay": float(parts[4]),
+        "az": float(parts[5]),
 
-        "gyro_x": float(parts[6]),
-        "gyro_y": float(parts[7]),
-        "gyro_z": float(parts[8]),
+        "gx": float(parts[6]),
+        "gy": float(parts[7]),
+        "gz": float(parts[8]),
 
-        "flex_1": int(parts[9]),
-        "flex_2": int(parts[10]),
-        "flex_3": int(parts[11]),
-        "flex_4": int(parts[12]),
-        "flex_5": int(parts[13]),
+        "hall1": int(parts[9]),
+        "hall2": int(parts[10]),
     }
-
-    return packet
 
 
 def parse_hello_message(message):

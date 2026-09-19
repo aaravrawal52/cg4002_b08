@@ -94,6 +94,7 @@ packets_received = 0
 packets_missing = 0
 packets_out_of_order = 0
 invalid_packets = 0
+gesture_sequence = 0
 
 buffer = ""
 
@@ -291,6 +292,29 @@ while True:
                     )
 
                     print()
+                if packets_received % 500 == 0:
+                    gesture = "SWIPE_LEFT"
+                    confidence = 0.94
+
+                    gesture_message = (
+                        f"GESTURE,"
+                        f"{gesture_sequence},"
+                        f"{gesture},"
+                        f"{confidence}\n"
+                    )
+
+                    conn.sendall(
+                        gesture_message.encode()
+                    )
+
+                    print(
+                        f"[GESTURE] Sent "
+                        f"seq={gesture_sequence} "
+                        f"gesture={gesture} "
+                        f"confidence={confidence}"
+                    )
+
+                    gesture_sequence += 1
 
 
             except ValueError as error:

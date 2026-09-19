@@ -19,6 +19,7 @@ PROTOCOL_VERSION = 1
 
 
 sensor_queue = asyncio.Queue(maxsize=500)
+gesture_queue = asyncio.Queue(maxsize=50)
 
 ble_received = 0
 ble_missing = 0
@@ -188,6 +189,64 @@ async def stats_task():
         print("===================================")
         print()
 
+async def ultra96_receiver(reader):
+    print(
+        "[RECEIVER] Waiting for Ultra96 messages..."
+    )
+
+    while True:
+        data = await reader.readline()
+
+        if not data:
+            raise ConnectionError(
+                "Ultra96 disconnected"
+            )
+
+        message = data.decode().strip()
+
+        parts = message.split(",")
+
+        if (
+            len(parts) == 4
+            and parts[0] == "GESTURE"
+        ):
+            try:
+                gesture = {
+                    "sequence": int(parts[1]),
+                    "gesture": parts[2],
+                    "confidence": float(parts[3]),
+                }
+
+            except ValueError:
+                print(
+                    f"[RECEIVER] Invalid gesture: "
+                    f"{message}"
+                )
+                continue
+
+            print(
+                f"[RECEIVER] Gesture received: "
+                f"seq={gesture['sequence']} "
+                f"gesture={gesture['gesture']} "
+                f"confidence={gesture['confidence']}"
+            )
+
+            try:
+                gesture_queue.put_nowait(
+                    gesture
+                )
+
+            except asyncio.QueueFull:
+                print(
+                    "[GESTURE QUEUE] FULL"
+                )
+
+        else:
+            print(
+                f"[RECEIVER] Unknown message: "
+                f"{message}"
+            )
+
 
 async def main():
 
@@ -296,6 +355,15 @@ async def main():
                 writer
             )
         )
+        receiver = asyncio.create_task(
+
+            ultra96_receiver(
+
+                reader
+
+            )
+
+        )
 
         stats = asyncio.create_task(
             stats_task()
@@ -313,6 +381,7 @@ async def main():
 
         finally:
             sender.cancel()
+            receiver.cancel()
             stats.cancel()
 
             writer.close()

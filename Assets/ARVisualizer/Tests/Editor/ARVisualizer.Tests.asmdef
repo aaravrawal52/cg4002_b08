@@ -1,0 +1,6 @@
+{
+  "name": "ARVisualizer.Tests",
+  "references": ["ARVisualizer.Runtime", "Unity.XR.ARFoundation", "Unity.XR.ARSubsystems", "Unity.XR.Simulation", "Unity.ugui"],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"]
+}

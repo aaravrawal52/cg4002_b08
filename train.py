@@ -58,15 +58,14 @@ def objective(trial, X_train, y_train, X_val, y_val):
     val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
     val_dataloader = DataLoader(val_dataset, batch_size=5, shuffle=True)
 
-    num_epochs=10
+    num_epochs=50
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
     optimizer = optim.Adam(model.parameters(), lr= lr)
     loss_criterion = nn.CrossEntropyLoss()
     best_vloss = 1000
-    epoch_number = 1
     best_epoch = 1
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    best_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    epochs_no_improve = 0
+    PATIENCE = 10
 
     for epoch in range(num_epochs):
         running_loss = 0
@@ -75,7 +74,8 @@ def objective(trial, X_train, y_train, X_val, y_val):
         
         model.train()
         for batch_input, batch_label in train_dataloader:
-            
+            batch_input = batch_input.to(device)
+            batch_label = batch_label.to(device)
             logits = model(batch_input)
             pred_probab = nn.Softmax(dim=1)(logits)
             y_pred = pred_probab.argmax(1)
@@ -90,6 +90,8 @@ def objective(trial, X_train, y_train, X_val, y_val):
         model.eval()
         with torch.no_grad():
             for batch_vinput, batch_vlabel in val_dataloader:
+                batch_vinput = batch_vinput.to(device)
+                batch_vlabel = batch_vlabel.to(device)
                 voutputs = model(batch_vinput)
                 vloss = loss_criterion(voutputs, batch_vlabel)
                 running_vloss += vloss.item()
@@ -103,12 +105,18 @@ def objective(trial, X_train, y_train, X_val, y_val):
             raise optuna.exceptions.TrialPruned()
 
         # Track best performance, and save the model's state
-        if avg_vloss < best_vloss:
+        if avg_vloss <= best_vloss:
             best_vloss = avg_vloss
-            best_epoch = epoch_number
-            best_timestamp_ = timestamp
-        epoch_number += 1
-    return avg_vloss
+            best_epoch = epoch + 1
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= PATIENCE:
+                print("early stopping")
+                break
+    
+    trial.set_user_attr("best_epoch", best_epoch)
+    return best_vloss
 
 if __name__ == "__main__":
     training_data = np.load('preprocessed_data/training_data.npz')
@@ -124,7 +132,7 @@ if __name__ == "__main__":
     X_val = torch.from_numpy(X_val).float()
     y_val = torch.from_numpy(y_val).long()
 
-    study = optuna.create_study(direction="minimize")
+    study = optuna.create_study(direction="minimize", pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5))
     study.optimize(lambda trial: objective(trial, X_train, y_train, X_val, y_val), n_trials=100, timeout=600)
 
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])

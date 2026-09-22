@@ -1,4 +1,3 @@
-import torch
 from torch import nn
 
 def build_model(channels, kernels):

@@ -1,12 +1,12 @@
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-from torch import nn
-from torch import optim
-from datetime import datetime
-import optuna
-from optuna.trial import TrialState
 import json
+
+import numpy as np
+import optuna
+import torch
+from optuna.trial import TrialState
+from torch import nn, optim
+from torch.utils.data import DataLoader
+
 from model import build_model
 
 def define_model(trial):
@@ -16,6 +16,12 @@ def define_model(trial):
     return build_model(channels, kernels)
 
 def objective(trial, X_train, y_train, X_val, y_val):
+    """
+    Run Optuna through the different combinations of hyperparameters and compare train and val loss
+
+    returns:
+    - best_vloss: for Optuna to compare across diff trials and rank the trials
+    """
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using {device} device")
     model = define_model(trial).to(device)
@@ -47,10 +53,8 @@ def objective(trial, X_train, y_train, X_val, y_val):
             logits = model(batch_input)
             pred_probab = nn.Softmax(dim=1)(logits)
             y_pred = pred_probab.argmax(1)
-            # print(f"Predicted class: {y_pred}")
             loss = loss_criterion(logits, batch_label)
             running_loss += loss.item()
-            # print("loss: ", loss)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -72,7 +76,6 @@ def objective(trial, X_train, y_train, X_val, y_val):
         if trial.should_prune():
             raise optuna.exceptions.TrialPruned()
 
-        # Track best performance, and save the model's state
         if avg_vloss <= best_vloss:
             best_vloss = avg_vloss
             best_epoch = epoch + 1
@@ -136,6 +139,3 @@ if __name__ == "__main__":
     }
     with open("best_params.json", "w") as f:
         json.dump(config, f)
-
-    # model_path = f'models/model_{best_timestamp}_{best_epoch}'
-    # torch.save(model.state_dict(), model_path)

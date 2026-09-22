@@ -1,16 +1,14 @@
-import csv
-import time
-from pathlib import Path
-from data_ingestion import stream_rows, segment_windows
-import pandas as pd
-from pathlib import Path
 import json
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+
+from data_ingestion import segment_windows, stream_rows
 
 CSV_PATH = Path(__file__).parent / "dummy_dataset" / "sensor_stream_raw.csv"
 
 def list_sessions(sessions_dir):
-    """Each session folder has its own sensor_stream_raw.csv + sensor_stream_labels.csv"""
     sessions_dir = Path(sessions_dir)
     return sorted(session for session in sessions_dir.iterdir())
 
@@ -48,6 +46,16 @@ def apply_zscore_normalization(df, COLUMNS):
         df[column] = z_scores
 
 def label_window(window, df_label, window_size):
+    """ This function assignes a class to a window, based on the percentage an action takes up in the window.
+
+    args:
+    - window
+    - df_label: dataframe containing the labelled gesture class corresponding to the respective indexes from raw data
+    - window_size
+
+    returns:
+    - most_likely_class: the class assigned to the window
+    """
     class_counter = [0] * len(action_map)
     window_start_idx = int(window[0]["sample_idx"])
     window_end_idx = window_start_idx + window_size
@@ -63,11 +71,19 @@ def label_window(window, df_label, window_size):
         class_counter[row["action_class"]] += percentage_overlap
     
     most_likely_class = class_counter.index(max(class_counter))
-    # print(most_likely_class)
     if class_counter[most_likely_class] >= THRESHOLD:
         return most_likely_class
 
 def build_dataset(sessions, window_size, COLUMNS, mode):
+    """
+    Preprocess dataset:
+    - zscore normalization
+    - label windows
+    
+    returns:
+    - X: list of windows
+    - y: list of action class for each window
+    """
     X = []
     y = []
     for session in sessions:
@@ -75,21 +91,18 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
         print("session: ", session)
         instance_label = session/'sensor_stream_labels.csv'
         instance_raw = session/'sensor_stream_raw.csv'
-        # instance_label = 'dummy_dataset/unittest_labels.csv'
-        # instance_raw = 'dummy_dataset/unittest_raw.csv'
         df = pd.read_csv(instance_raw)
         df_label = pd.read_csv(instance_label)
         df_label["action_class"] = df_label["gesture"].map(action_map).fillna(0).astype(int)
 
         if mode == "train":
-            zscore_normalization(df, COLUMNS) # z-score normalization on raw data
+            zscore_normalization(df, COLUMNS)
         else:
             apply_zscore_normalization(df, COLUMNS)
             print("applied zscore")
 
         for window in segment_windows(instance_raw, window_size):
             label = label_window(window, df_label, window_size)
-            # print(label)
             if label is None:
                 continue
             window_values = []

@@ -1,13 +1,14 @@
+import json
+import shutil
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import torch
+from torch import nn, optim
 from torch.utils.data import DataLoader
-from torch import nn
-from torch import optim
-from datetime import datetime
-import json
+
 from model import build_model
-from pathlib import Path
-import shutil
 
 def define_model(stats):
     channels = stats["channels"]
@@ -15,6 +16,9 @@ def define_model(stats):
     return build_model(channels, kernels)
 
 def train_model(X, y):
+    """
+    Uses the optimized hyperparameters to train the model
+    """
     with open('best_params.json') as json_file:
         stats = json.load(json_file)
 
@@ -43,10 +47,8 @@ def train_model(X, y):
             logits = model(batch_input)
             pred_probab = nn.Softmax(dim=1)(logits)
             y_pred = pred_probab.argmax(1)
-            # print(f"Predicted class: {y_pred}")
             loss = loss_criterion(logits, batch_label)
             running_loss += loss.item()
-            # print("loss: ", loss)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -72,7 +74,6 @@ if __name__ == "__main__":
 
     X = torch.cat((X_train, X_val), 0)
     y = torch.cat((y_train, y_val), 0)
-
 
     best_state, stats = train_model(X,y)
     

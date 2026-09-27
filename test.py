@@ -13,7 +13,7 @@ def load_split(npz_path):
     data = np.load(npz_path)
     X, y = data["X"], data["y"]
     X = np.transpose(X, axes=(0, 2, 1))
-    X = torch.from_numpy(X).float()
+    X = torch.from_numpy(X).float().unsqueeze(2)
     y = torch.from_numpy(y).long()
     return X, y
 

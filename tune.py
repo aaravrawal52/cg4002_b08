@@ -95,12 +95,12 @@ if __name__ == "__main__":
     test_data = np.load('preprocessed_data/test_data.npz')
     X_train, y_train = training_data['X'], training_data['y']
     X_train = np.transpose(X_train, axes = (0,2,1))
-    X_train = torch.from_numpy(X_train).float()
+    X_train = torch.from_numpy(X_train).float().unsqueeze(2)
     y_train = torch.from_numpy(y_train).long()
 
     X_val, y_val = val_data['X'], val_data['y']
     X_val = np.transpose(X_val, axes = (0,2,1))
-    X_val = torch.from_numpy(X_val).float()
+    X_val = torch.from_numpy(X_val).float().unsqueeze(2)
     y_val = torch.from_numpy(y_val).long()
 
     study = optuna.create_study(

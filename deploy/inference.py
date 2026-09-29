@@ -2,6 +2,7 @@ import json
 import numpy as np
 from pynq_dpu import DpuOverlay
 from data_ingestion import segment_windows
+import time
 
 COLUMNS = ["hall_thumb", "hall_index", "hall_middle", "hall_ring",
            "hall_pinky", "accel_x", "accel_y", "gyro_z"]
@@ -48,8 +49,11 @@ def main():
         quantized = np.clip(np.round(norm * input_scale), -128, 127).astype(np.int8)
         input_data[0][0] = quantized.reshape(input_shape[1:])
 
+        t0 = time.perf_counter()
         job_id = dpu.execute_async(input_data, output_data)
         dpu.wait(job_id)
+        t1 = time.perf_counter()
+        print(f"inference time: {(t1 - t0)*1000:.2f} ms")
 
         pred_class = int(np.argmax(output_data[0][0]))
         print("Predicted:", idx_to_gesture.get(pred_class, "unknown"))

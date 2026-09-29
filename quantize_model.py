@@ -111,7 +111,7 @@ def quantization():
     elif quant_mode == 'test':
         X, y = X_test, y_test
     else:
-        X, y = X_train, y_train
+        X, y = X_calib, y_calib
 
     evaluate(X,y, quant_model)
 

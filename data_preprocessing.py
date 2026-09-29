@@ -19,21 +19,6 @@ def train_val_test_sessions(SESSIONS_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SES
     test_sessions = set(sessions[TRAIN_SESSIONS+VAL_SESSIONS:])
     return train_sessions, val_sessions, test_sessions
 
-# def zscore_normalization(df, COLUMNS):
-#     stats = {}
-#     for column in COLUMNS:
-#         mean = np.mean(df[column])
-#         std_dev = np.std(df[column])
-#         # z_scores = (df[column] - mean) / std_dev
-#         stats[column] = {
-#             "mean": mean,
-#             "std_dev": std_dev
-#         }
-
-#         with open("zscore_stats.json", "w") as f:
-#             json.dump(stats, f)
-#     return stats
-
 def fit_zscore_stats(sessions, COLUMNS):
     combined = pd.concat([pd.read_csv(s / 'sensor_stream_raw.csv') for s in sessions], ignore_index=True)
     stats = {c: {"mean": float(np.mean(combined[c])), "std_dev": float(np.std(combined[c]))} for c in COLUMNS}

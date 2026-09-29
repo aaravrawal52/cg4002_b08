@@ -19,31 +19,32 @@ def train_val_test_sessions(SESSIONS_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SES
     test_sessions = set(sessions[TRAIN_SESSIONS+VAL_SESSIONS:])
     return train_sessions, val_sessions, test_sessions
 
-def zscore_normalization(df, COLUMNS):
-    stats = {}
-    for column in COLUMNS:
-        mean = np.mean(df[column])
-        std_dev = np.std(df[column])
-        z_scores = (df[column] - mean) / std_dev
-        df[column] = z_scores
-        stats[column] = {
-            "mean": mean,
-            "std_dev": std_dev
-        }
+# def zscore_normalization(df, COLUMNS):
+#     stats = {}
+#     for column in COLUMNS:
+#         mean = np.mean(df[column])
+#         std_dev = np.std(df[column])
+#         # z_scores = (df[column] - mean) / std_dev
+#         stats[column] = {
+#             "mean": mean,
+#             "std_dev": std_dev
+#         }
 
-        with open("zscore_stats.json", "w") as f:
-            json.dump(stats, f)
-    return df
+#         with open("zscore_stats.json", "w") as f:
+#             json.dump(stats, f)
+#     return stats
+
+def fit_zscore_stats(sessions, COLUMNS):
+    combined = pd.concat([pd.read_csv(s / 'sensor_stream_raw.csv') for s in sessions], ignore_index=True)
+    stats = {c: {"mean": float(np.mean(combined[c])), "std_dev": float(np.std(combined[c]))} for c in COLUMNS}
+    with open("zscore_stats.json", "w") as f:
+        json.dump(stats, f)
+    return stats
 
 def apply_zscore_normalization(df, COLUMNS):
     with open('zscore_stats.json') as json_file:
         stats = json.load(json_file)
-
-    for column in COLUMNS:
-        mean = stats[column]["mean"]
-        std_dev = stats[column]["std_dev"]
-        z_scores = (df[column] - mean) / std_dev
-        df[column] = z_scores
+    return stats
 
 def label_window(window, df_label, window_size):
     """ This function assignes a class to a window, based on the percentage an action takes up in the window.
@@ -95,13 +96,11 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
         df_label = pd.read_csv(instance_label)
         df_label["action_class"] = df_label["gesture"].map(action_map).fillna(0).astype(int)
 
-        if mode == "train":
-            zscore_normalization(df, COLUMNS)
-        else:
-            apply_zscore_normalization(df, COLUMNS)
-            print("applied zscore")
 
-        for window in segment_windows(instance_raw, window_size):
+        stats = apply_zscore_normalization(df, COLUMNS)
+        print("applied zscore")
+
+        for window in segment_windows(instance_raw, window_size, realtime=False):
             label = label_window(window, df_label, window_size)
             if label is None:
                 continue
@@ -109,7 +108,7 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
             for row in window:
                 row_values =[]
                 for c in COLUMNS:
-                    row_values.append(float(row[c]))
+                    row_values.append((float(row[c]) - stats[c]["mean"]) / stats[c]["std_dev"])
                 window_values.append(row_values)
             X.append(window_values)
             y.append(label)
@@ -130,6 +129,7 @@ if __name__ == "__main__":
         action_map = json.load(file)
 
     train_sessions, val_sessions, test_sessions = train_val_test_sessions(SESSIONS_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS)
+    fit_zscore_stats(train_sessions, COLUMNS)
     
     X_train, y_train = build_dataset(train_sessions, window_size, COLUMNS, "train")
     print("val session paths: ", val_sessions)

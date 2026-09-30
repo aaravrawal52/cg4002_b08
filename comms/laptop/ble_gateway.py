@@ -1,7 +1,7 @@
 import asyncio
 import random
 import time
-
+import zlib
 from bleak import BleakClient
 from bleak import BleakScanner
 import json
@@ -183,12 +183,66 @@ def notification_handler(characteristic, data):
         # hall1 hall2,
         # MODIFIED_BY_GLOVE
 
-        if len(parts) != 14:
+        if len(parts) != 15:
             print(
                 f"[BLE] Invalid response "
                 f"fields={len(parts)}"
             )
             return
+        last_comma = message.rfind(",")
+
+        if last_comma == -1:
+            print(
+                "[CRC] Invalid response format"
+            )
+            return
+
+
+        message_without_crc = (
+            message[:last_comma]
+        )
+
+        received_crc_text = (
+            message[last_comma + 1:]
+        )
+
+
+        try:
+            received_crc = int(
+                received_crc_text,
+                16
+            )
+
+        except ValueError:
+            print(
+                "[CRC] Invalid CRC field"
+            )
+            return
+
+
+        calculated_crc = calculate_crc32(
+            message_without_crc
+        )
+
+
+        if received_crc != calculated_crc:
+
+            print(
+                f"[CRC] FAILED "
+                f"received={received_crc:08X} "
+                f"calculated={calculated_crc:08X}"
+            )
+
+            print(
+                "[PACKET] Corrupted response dropped"
+            )
+
+            return
+
+
+        print(
+            f"[CRC] OK seq={parts[3]}"
+        )
 
         sample = {
             "device_id": parts[2],
@@ -496,6 +550,15 @@ async def phone_sender():
 
         gesture_queue.task_done()
 
+
+def calculate_crc32(text):
+    return (
+        zlib.crc32(
+            text.encode("utf-8")
+        )
+        & 0xFFFFFFFF
+    )
+
 async def keyboard_sender(client):
     global command_sequence
 
@@ -571,6 +634,32 @@ async def keyboard_sender(client):
             f"{sample['hall1']},"
             f"{sample['hall2']}"
         )
+        crc = calculate_crc32(
+            packet
+        )
+
+        # Reliability demo:
+        # 'c' deliberately sends an incorrect CRC.
+        if text.lower() == "c":
+
+            bad_crc = crc ^ 0x00000001
+
+            packet = (
+                f"{packet},"
+                f"{bad_crc:08X}"
+            )
+
+            print(
+                f"[TEST] Sending intentionally "
+                f"corrupted packet seq={command_sequence}"
+            )
+
+        else:
+
+            packet = (
+                f"{packet},"
+                f"{crc:08X}"
+            )
 
         await client.write_gatt_char(
             COMMAND_CHAR_UUID,

@@ -53,10 +53,77 @@ ble_received = 0
 ble_missing = 0
 queue_dropped = 0
 ultra96_forwarded = 0
+ble_bytes_received = 0
 
 last_ble_sequence = None
 
+def handle_stream_packet(message, byte_count):
+    global ble_received
+    global ble_missing
+    global ble_bytes_received
+    global last_ble_sequence
 
+    try:
+        parts = message.split(",")
+
+        # DATA
+        # GLOVE_01
+        # sequence
+        # timestamp
+        # ax ay az
+        # gx gy gz
+        # hall1 hall2
+        #
+        # Total = 12 fields
+
+        if len(parts) != 12:
+            print(
+                f"[STREAM] Invalid packet "
+                f"fields={len(parts)}"
+            )
+            return
+
+        if parts[0] != "DATA":
+            return
+
+        device_id = parts[1]
+        sequence = int(parts[2])
+        timestamp = int(parts[3])
+
+        ax = float(parts[4])
+        ay = float(parts[5])
+        az = float(parts[6])
+
+        gx = float(parts[7])
+        gy = float(parts[8])
+        gz = float(parts[9])
+
+        hall1 = int(parts[10])
+        hall2 = int(parts[11])
+
+        if last_ble_sequence is not None:
+            expected = last_ble_sequence + 1
+
+            if sequence > expected:
+                missing = sequence - expected
+
+                ble_missing += missing
+
+                print(
+                    f"[STREAM] Missing "
+                    f"{missing} packet(s)"
+                )
+
+        last_ble_sequence = sequence
+
+        ble_received += 1
+        ble_bytes_received += byte_count
+
+    except ValueError as error:
+        print(
+            f"[STREAM] Parse error: {error}"
+        )
+    
 def parse_ble_message(data):
     message = data.decode("utf-8")
 
@@ -91,6 +158,11 @@ def notification_handler(characteristic, data):
         # Ignore the periodic FireBeetle DATA stream
         # for this keyboard pipeline test.
         if message.startswith("DATA,"):
+            handle_stream_packet(
+                message,
+                len(data)
+            )
+
             return
 
         if not message.startswith("RESPONSE,DATA,"):
@@ -225,6 +297,7 @@ async def ultra96_sender(writer):
 
 
 async def stats_task():
+    previous_bytes = 0
     previous_received = 0
     previous_forwarded = 0
 
@@ -232,6 +305,20 @@ async def stats_task():
         await asyncio.sleep(5)
 
         current_received = ble_received
+        current_bytes = ble_bytes_received
+
+        bytes_last_5s = (
+            current_bytes - previous_bytes
+        )
+
+        kbps = (
+            bytes_last_5s
+            * 8
+            / 5
+            / 1000
+        )
+
+        previous_bytes = current_bytes
 
         received_last_5s = (
             current_received
@@ -273,6 +360,9 @@ async def stats_task():
         )
         print(
             f"Forward rate:    {forward_rate:.1f} Hz"
+        )
+        print(
+            f"BLE throughput:  {kbps:.2f} kbps"
         )
         print("===================================")
         print()
@@ -409,13 +499,43 @@ async def phone_sender():
 async def keyboard_sender(client):
     global command_sequence
 
-    print("[KEYBOARD] Press ENTER to send random dummy data")
+    print()
+    print("========== COMMANDS ==========")
+    print("ENTER : send pipeline packet")
+    print("s     : start 100 Hz stream")
+    print("x     : stop stream")
+    print("q     : stop keyboard input")
+    print("==============================")
+    print()
 
     while True:
         text = await asyncio.to_thread(
             input,
             "SEND> "
         )
+        if text.lower() == "s":
+            await client.write_gatt_char(
+                COMMAND_CHAR_UUID,
+                b"CONTROL,START_STREAM",
+                response=True
+            )
+
+            print(
+                "[STREAM] Started 100 Hz stream"
+            )
+            continue
+
+        if text.lower() == "x":
+            await client.write_gatt_char(
+                COMMAND_CHAR_UUID,
+                b"CONTROL,STOP_STREAM",
+                response=True
+            )
+
+            print(
+                "[STREAM] Stopped"
+            )
+            continue
 
         if text.lower() == "q":
             print("[KEYBOARD] Input stopped")

@@ -1,5 +1,5 @@
 import socket
-
+import random
 
 HOST = "127.0.0.1"
 PORT = 5001
@@ -291,30 +291,64 @@ while True:
                         "================================="
                     )
 
-                    print()
-                if packets_received % 500 == 0:
-                    gesture = "SWIPE_LEFT"
-                    confidence = 0.94
+                # Prototype AI stage:
 
-                    gesture_message = (
-                        f"GESTURE,"
-                        f"{gesture_sequence},"
-                        f"{gesture},"
-                        f"{confidence}\n"
-                    )
+# Every dummy sensor packet produces one random AI event.
+                gestures = [
 
-                    conn.sendall(
-                        gesture_message.encode()
-                    )
+                    "SWIPE_LEFT",
 
-                    print(
-                        f"[GESTURE] Sent "
-                        f"seq={gesture_sequence} "
-                        f"gesture={gesture} "
-                        f"confidence={confidence}"
-                    )
+                    "SWIPE_RIGHT",
 
-                    gesture_sequence += 1
+                    "SWIPE_UP",
+
+                    "SWIPE_DOWN",
+
+                    "PINCH",
+
+                    "ROTATE",
+
+                ]
+
+                gesture = random.choice(gestures)
+
+                confidence = round(
+
+                    random.uniform(0.80, 0.99),
+
+                    2
+
+                )
+
+                gesture_message = (
+
+                    f"GESTURE,"
+
+                    f"{gesture_sequence},"
+
+                    f"{gesture},"
+
+                    f"{confidence}\n"
+
+                )
+
+                conn.sendall(
+
+                    gesture_message.encode()
+
+                )
+
+                print(
+
+                    f"[AI] Input seq={packet['sequence']} "
+
+                    f"-> {gesture} "
+
+                    f"confidence={confidence}"
+
+                )
+
+                gesture_sequence += 1
 
 
             except ValueError as error:

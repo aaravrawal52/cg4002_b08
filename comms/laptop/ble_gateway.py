@@ -503,6 +503,7 @@ async def keyboard_sender(client):
     print("========== COMMANDS ==========")
     print("ENTER : send pipeline packet")
     print("s     : start 100 Hz stream")
+    print("m     : maximum-speed stream")
     print("x     : stop stream")
     print("q     : stop keyboard input")
     print("==============================")
@@ -540,6 +541,17 @@ async def keyboard_sender(client):
         if text.lower() == "q":
             print("[KEYBOARD] Input stopped")
             return
+        if text.lower() == "m":
+            await client.write_gatt_char(
+                COMMAND_CHAR_UUID,
+                b"CONTROL,MAX_STREAM",
+                response=True
+            )
+
+            print(
+                "[STREAM] Maximum-speed stream started"
+            )
+            continue
 
         sample = random.choice(DUMMY_SAMPLES)
 

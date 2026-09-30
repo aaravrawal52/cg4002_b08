@@ -170,29 +170,31 @@ async def ultra96_sender(writer):
         sequence = sample["sequence"]
         timestamp = sample["timestamp"]
 
-        ax = 1.1
-        ay = 2.2
-        az = 9.81
-
-        gx = 0.1
-        gy = 0.2
-        gz = 0.3
-
-        hall1 = 2000
-        hall2 = 2100
 
         message = (
+
             f"SENSOR,"
-            f"{sequence},"
-            f"{timestamp},"
-            f"{ax},"
-            f"{ay},"
-            f"{az},"
-            f"{gx},"
-            f"{gy},"
-            f"{gz},"
-            f"{hall1},"
-            f"{hall2}\n"
+
+            f"{sample['sequence']},"
+
+            f"{sample['timestamp']},"
+
+            f"{sample['ax']},"
+
+            f"{sample['ay']},"
+
+            f"{sample['az']},"
+
+            f"{sample['gx']},"
+
+            f"{sample['gy']},"
+
+            f"{sample['gz']},"
+
+            f"{sample['hall1']},"
+
+            f"{sample['hall2']}\n"
+
         )
 
         if ultra96_forwarded % 100 == 0:
@@ -450,6 +452,72 @@ async def keyboard_sender(client):
         )
 
         command_sequence += 1
+async def ble_connection_manager():
+    while True:
+
+        print(
+            f"[BLE] Searching for {DEVICE_NAME}..."
+        )
+
+        device = await BleakScanner.find_device_by_name(
+            DEVICE_NAME,
+            timeout=10
+        )
+
+        if device is None:
+            print(
+                "[BLE] Glove not found. "
+                "Retrying in 2 seconds..."
+            )
+
+            await asyncio.sleep(2)
+            continue
+
+        print("[BLE] Glove found")
+
+        try:
+
+            async with BleakClient(device) as client:
+
+                print("[BLE] Connected")
+
+                await client.start_notify(
+                    SENSOR_CHAR_UUID,
+                    notification_handler
+                )
+
+                print(
+                    "[BLE] Notifications subscribed"
+                )
+
+                keyboard = asyncio.create_task(
+                    keyboard_sender(client)
+                )
+
+                print(
+                    "[BLE] FireBeetle ready"
+                )
+
+                while client.is_connected:
+                    await asyncio.sleep(1)
+
+                print(
+                    "[BLE] FireBeetle disconnected"
+                )
+
+                keyboard.cancel()
+
+        except Exception as error:
+
+            print(
+                f"[BLE] Connection lost: {error}"
+            )
+
+        print(
+            "[BLE] Reconnecting in 2 seconds..."
+        )
+
+        await asyncio.sleep(2)
 
 async def main():
 
@@ -520,94 +588,58 @@ async def main():
     )
 
 
-    # --------------------------------
-    # FIND ESP32
-    # --------------------------------
+    sender = asyncio.create_task(
+        ultra96_sender(writer)
+    )
 
+    receiver = asyncio.create_task(
+        ultra96_receiver(reader)
+    )
+
+    phone = asyncio.create_task(
+        phone_sender()
+    )
+
+    stats = asyncio.create_task(
+        stats_task()
+    )
+
+    ble_manager = asyncio.create_task(
+        ble_connection_manager()
+    )
+
+    print()
     print(
-        f"[BLE] Searching for {DEVICE_NAME}..."
+        "[GATEWAY] PIPELINE RUNNING"
     )
+    print()
 
-    device = await BleakScanner.find_device_by_name(
-        DEVICE_NAME,
-        timeout=10
-    )
-
-    if device is None:
-        raise RuntimeError(
-            "CG4002_GLOVE not found"
+    try:
+        await asyncio.gather(
+            sender,
+            receiver,
+            phone,
+            stats,
+            ble_manager,
         )
 
-    print(
-        "[BLE] Glove found"
-    )
+    finally:
+
+        sender.cancel()
+        receiver.cancel()
+        phone.cancel()
+        stats.cancel()
+        ble_manager.cancel()
+
+        phone_server.close()
+
+        await phone_server.wait_closed()
+
+        writer.close()
+
+        await writer.wait_closed()
 
 
-    # --------------------------------
-    # CONNECT BLE
-    # --------------------------------
-
-    async with BleakClient(device) as client:
-
-        print(
-            "[BLE] Connected"
-        )
-
-        await client.start_notify(
-            SENSOR_CHAR_UUID,
-            notification_handler
-        )
-
-        print(
-            "[BLE] Notifications subscribed"
-        )
-
-        sender = asyncio.create_task(
-            ultra96_sender(
-                writer
-            )
-        )
-        receiver = asyncio.create_task(
-            ultra96_receiver(
-                reader
-            )
-        )
-        phone = asyncio.create_task(
-            phone_sender()
-        )
-
-        stats = asyncio.create_task(
-            stats_task()
-        )
-        keyboard = asyncio.create_task(
-
-            keyboard_sender(client)
-
-        )       
-
-        print()
-        print(
-            "[GATEWAY] PIPELINE RUNNING"
-        )
-        print()
-
-        try:
-            while client.is_connected:
-                await asyncio.sleep(1)
-
-        finally:
-            sender.cancel()
-            receiver.cancel()
-            phone.cancel()
-            stats.cancel()
-            keyboard.cancel()
-
-            phone_server.close()
-            await phone_server.wait_closed()
-
-            writer.close()
-
-            await writer.wait_closed()
 
 
 try:

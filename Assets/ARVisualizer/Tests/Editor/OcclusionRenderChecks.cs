@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
+using UnityEngine.UI;
 
 namespace ARVisualizer.Tests
 {
@@ -45,10 +46,18 @@ namespace ARVisualizer.Tests
             var sample = new Texture2D(8, 8, TextureFormat.RGB24, false);
             var material = new Material(Resources.Load<Shader>("VisualizerScreen"));
             material.SetColor("_BaseColor", Color.magenta);
-            var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            var probe = GameObject.CreatePrimitive(PrimitiveType.Quad);
             probe.name = "Depth test screen";
             probe.GetComponent<Renderer>().sharedMaterial = material;
             probe.transform.SetParent(camera.transform, false);
+            var menuProbe = new GameObject("Depth test menu", typeof(RectTransform), typeof(Canvas), typeof(Image));
+            var menuCanvas = menuProbe.GetComponent<Canvas>(); menuCanvas.renderMode = RenderMode.WorldSpace; menuCanvas.worldCamera = camera;
+            var menuRect = (RectTransform)menuProbe.transform; menuRect.sizeDelta = Vector2.one;
+            menuRect.SetParent(camera.transform, false);
+            var menuGraphic = menuProbe.GetComponent<Image>(); menuGraphic.color = Color.magenta;
+            menuGraphic.material = app.ScreenApps.transform.Find("Photo library").GetComponent<Image>().material;
+            Assert.AreEqual("ARVisualizer/Occluded Screen UI", menuGraphic.material.shader.name);
+            menuProbe.SetActive(false);
             try
             {
                 target.Create();
@@ -71,6 +80,15 @@ namespace ARVisualizer.Tests
                 Assert.Greater(Difference(empty, inFront), 0.25f,
                     "A cube closer than the scanned environment must remain visible");
 
+                probe.SetActive(false); menuProbe.SetActive(true);
+                PositionProbe(menuProbe, 15); Canvas.ForceUpdateCanvases();
+                Assert.Less(Difference(empty, SampleCentre(camera, target, sample)), 0.08f,
+                    "The library material must be occluded by nearer real-world depth");
+                PositionProbe(menuProbe, 0.3f); Canvas.ForceUpdateCanvases();
+                Assert.Greater(Difference(empty, SampleCentre(camera, target, sample)), 0.25f,
+                    "The library must remain visible in front of real-world depth");
+                menuProbe.SetActive(false); probe.SetActive(true);
+
                 // Exercise the same setting exposed in the Inspector; depth must really switch off.
                 settings.FindProperty("occlusionPreference").intValue = (int)OcclusionPreferenceMode.NoOcclusion;
                 settings.ApplyModifiedPropertiesWithoutUndo();
@@ -81,11 +99,15 @@ namespace ARVisualizer.Tests
                 Color withoutDepth = SampleCentre(camera, target, sample);
                 Assert.Greater(Difference(empty, withoutDepth), 0.25f,
                     "The same distant cube should draw over the camera image when occlusion is disabled");
+                probe.SetActive(false); menuProbe.SetActive(true); PositionProbe(menuProbe, 15); Canvas.ForceUpdateCanvases();
+                Assert.Greater(Difference(empty, SampleCentre(camera, target, sample)), 0.25f,
+                    "The distant library becomes visible when real-world occlusion is disabled");
             }
             finally
             {
                 // Destroy is deferred; hide the temporary probe before subsequent screenshots.
                 probe.SetActive(false);
+                menuProbe.SetActive(false); Object.Destroy(menuProbe);
                 settings.Update();
                 settings.FindProperty("occlusionPreference").intValue = originalPreference;
                 settings.ApplyModifiedPropertiesWithoutUndo();
@@ -105,7 +127,7 @@ namespace ARVisualizer.Tests
         static void PositionProbe(GameObject probe, float depth)
         {
             probe.transform.localPosition = Vector3.forward * depth;
-            probe.transform.localScale = new Vector3(depth * 0.16f, depth * 0.09f, ScreenSurface.Thickness);
+            probe.transform.localScale = new Vector3(depth * 0.16f, depth * 0.09f, 1);
         }
 
         static Color SampleCentre(Camera camera, RenderTexture target, Texture2D sample)

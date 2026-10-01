@@ -29,6 +29,10 @@ namespace ARVisualizer
         public ARSession Session { get; set; }
         public Transform TrackingOrigin { get; set; }
         public Camera ARCamera { get; set; }
+        // In goggles the camera targets a 4:3 texture rather than the phone's wide display.
+        public Vector2Int ViewportSize => ARCamera != null && ARCamera.targetTexture != null
+            ? new Vector2Int(ARCamera.targetTexture.width, ARCamera.targetTexture.height)
+            : new Vector2Int(Screen.width, Screen.height);
         public bool PointerEnabled { get; private set; } = true;
         public bool PointerLockedOn { get; private set; }
         public bool IsTracked { get; private set; }
@@ -137,12 +141,13 @@ namespace ARVisualizer
             if (ARSession.state != ARSessionState.SessionTracking || Session == null || Session.subsystem == null)
             { ResetTracking(); Status = "Waiting for AR camera"; return; }
             int orientation = Screen.orientation == ScreenOrientation.LandscapeRight ? 4 : 3;
-            if (previousOrientation != orientation || previousWidth != Screen.width || previousHeight != Screen.height)
-            { previousOrientation = orientation; previousWidth = Screen.width; previousHeight = Screen.height; ResetTracking(); }
+            var viewportSize = ViewportSize;
+            if (previousOrientation != orientation || previousWidth != viewportSize.x || previousHeight != viewportSize.y)
+            { previousOrientation = orientation; previousWidth = viewportSize.x; previousHeight = viewportSize.y; ResetTracking(); }
             if (Time.unscaledTime >= nextSample)
             {
                 nextSample = Time.unscaledTime + 1f / samplesPerSecond;
-                if (AVHand_Submit(Session.subsystem.nativePtr, orientation, Screen.width, Screen.height) < 0)
+                if (AVHand_Submit(Session.subsystem.nativePtr, orientation, viewportSize.x, viewportSize.y) < 0)
                 { ResetTracking(); Status = "Hand tracking unavailable"; return; }
             }
             bool fresh = AVHand_Read(out var sample) == 1 && sample.age >= 0 && sample.age < maximumSampleAge;

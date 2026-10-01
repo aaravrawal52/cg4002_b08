@@ -9,10 +9,13 @@ namespace ARVisualizer
     [DisallowMultipleComponent, AddComponentMenu("AR Visualizer/Stereo Goggles")]
     public sealed class StereoGoggles : MonoBehaviour
     {
+        public const float ViewAspect = 4f / 3f;
         [Header("Eyes")]
         [Tooltip("Distance between the user's eyes, in metres. Does not change the size of placed objects.")]
         [SerializeField, Range(0.05f, 0.075f)] float interpupillaryDistance = 0.064f;
-        [Tooltip("Vertical field of view rendered for each eye. Match this to the headset optics.")]
+        [Tooltip("Use the main camera's full 4:3 projection, preserving its top and bottom. Disable only for a manually calibrated headset FOV.")]
+        [SerializeField] bool matchCameraFieldOfView = true;
+        [Tooltip("Manual vertical field of view. Used only when Match Camera Field Of View is disabled.")]
         [SerializeField, Range(40, 100)] float verticalFieldOfView = 70;
         [Tooltip("Eye midpoint relative to the rear AR camera, in camera-local metres. Calibrate for the phone mount.")]
         [SerializeField] Vector3 eyeCentreOffset;
@@ -37,6 +40,7 @@ namespace ARVisualizer
         public Vector3 EyeCentrePosition => source.transform.TransformPoint(eyeCentreOffset);
         public RenderTexture SourceColour => colour;
         public RenderTexture SourceDepth => depth;
+        public Vector2Int CaptureSize => new Vector2Int(width, height);
         internal RTHandle DepthHandle { get; private set; }
         internal RTHandle ColourHandle { get; private set; }
         internal Material ReprojectionMaterial => reprojection;
@@ -55,14 +59,19 @@ namespace ARVisualizer
         float normalDepth, normalAspect;
         bool normalMSAA, normalHDR, normalXR;
         int width, height;
+        GoggleCameraFrame cameraFrame;
 
-        public void Initialize(Camera camera) => source = camera;
+        public void Initialize(Camera camera) { source = camera; cameraFrame = new GoggleCameraFrame(source); }
+
+        Matrix4x4 EyeProjection => matchCameraFieldOfView ? source.projectionMatrix
+            : Matrix4x4.Perspective(verticalFieldOfView, ViewAspect, source.nearClipPlane, source.farClipPlane);
 
         public float PanelWidthThatFits(float distance, float panelAspect, float verticalOffset)
         {
-            float halfHeight = distance * Mathf.Tan(verticalFieldOfView * Mathf.Deg2Rad * 0.5f);
-            float eyeAspect = (float)Screen.width / Mathf.Max(1, Screen.height) * 0.5f;
-            float horizontal = 2 * halfHeight * eyeAspect - interpupillaryDistance;
+            var projection = EyeProjection;
+            float halfHeight = distance * (1 - Mathf.Abs(projection.m12)) / Mathf.Abs(projection.m11);
+            float halfWidth = distance * (1 - Mathf.Abs(projection.m02)) / Mathf.Abs(projection.m00);
+            float horizontal = 2 * halfWidth - interpupillaryDistance;
             float vertical = 2 * Mathf.Max(0, halfHeight - Mathf.Abs(verticalOffset)) * panelAspect;
             return Mathf.Max(0.05f, Mathf.Min(horizontal, vertical) * 0.9f);
         }
@@ -73,6 +82,7 @@ namespace ARVisualizer
             if (!active)
             {
                 IsActive = false;
+                cameraFrame?.End();
                 if (source != null)
                 {
                     source.targetTexture = normalTarget; source.rect = normalRect;
@@ -105,6 +115,7 @@ namespace ARVisualizer
             source.allowMSAA = source.allowHDR = false;
             source.cullingMask = 0; // Capture only the existing AR background and its real-world depth.
             source.rect = new Rect(0, 0, 1, 1); source.depth = -30;
+            cameraFrame.Begin();
             IsActive = true;
             rig.SetActive(true); display.SetActive(true);
             PrepareFrame();
@@ -121,6 +132,7 @@ namespace ARVisualizer
             DisplayCamera = MakeCamera("Goggle display", 100);
             DisplayCamera.cullingMask = 0;
             display = new GameObject("Stereo lens output", typeof(RectTransform), typeof(Canvas));
+            display.layer = 5;
             display.transform.SetParent(source.transform.parent, false);
             var canvas = display.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = 30000;
@@ -146,6 +158,7 @@ namespace ARVisualizer
         RawImage MakeImage(string name, float x, Material material)
         {
             var obj = new GameObject(name, typeof(RectTransform), typeof(RawImage));
+            obj.layer = 5;
             obj.transform.SetParent(display.transform, false);
             var rect = (RectTransform)obj.transform;
             rect.anchorMin = new Vector2(x, 0); rect.anchorMax = new Vector2(x + 0.5f, 1);
@@ -157,15 +170,17 @@ namespace ARVisualizer
         public void PrepareFrame()
         {
             if (!IsActive) return;
-            int w = Mathf.Max(64, Mathf.RoundToInt(Screen.width * renderScale / 2) * 2);
-            int h = Mathf.Max(64, Mathf.RoundToInt(Screen.height * renderScale));
+            // Both capture and eyes are exactly 4:3. Fit each eye into its display half;
+            // the phone's wider aspect must never crop the incoming camera frame.
+            int units = Mathf.Max(16, Mathf.RoundToInt(Screen.width * renderScale / 8));
+            int w = units * 8, h = units * 6;
             if (colour == null || w != width || h != height)
             {
                 ReleaseTextures(); width = w; height = h;
                 colour = CreateTexture("AR video", w, h, RenderTextureFormat.ARGB32, 24);
                 depth = CreateTexture("AR depth metres", w, h, RenderTextureFormat.RFloat, 0);
-                left = CreateTexture("Left eye", w / 2, h, RenderTextureFormat.ARGB32, 24);
-                right = CreateTexture("Right eye", w / 2, h, RenderTextureFormat.ARGB32, 24);
+                left = CreateTexture("Left eye", w / 2, h / 2, RenderTextureFormat.ARGB32, 24);
+                right = CreateTexture("Right eye", w / 2, h / 2, RenderTextureFormat.ARGB32, 24);
                 DepthHandle = RTHandles.Alloc(depth);
                 // Import only the colour aspect of the camera target; its depth is captured separately.
                 ColourHandle = RTHandles.Alloc(new RenderTargetIdentifier(colour), "AR video colour");
@@ -173,19 +188,38 @@ namespace ARVisualizer
                 LeftEye.targetTexture = left; RightEye.targetTexture = right;
                 leftImage.texture = left; rightImage.texture = right;
             }
-            // Retain the full camera image coordinates for Vision, AR raycasts and HUD selection.
-            source.aspect = (float)Screen.width / Mathf.Max(1, Screen.height);
+            source.aspect = ViewAspect;
+            cameraFrame.Refresh(CaptureSize);
             PositionEye(LeftEye, -0.5f); PositionEye(RightEye, 0.5f);
-            SetLens(leftLens, leftLensCentre);
-            SetLens(rightLens, new Vector2(1 - leftLensCentre.x, leftLensCentre.y));
+            var viewport = EyeViewport((float)Screen.width / Mathf.Max(1, Screen.height));
+            FitEye(leftImage, viewport, 0); FitEye(rightImage, viewport, 0.5f);
+            SetLens(leftLens, FitLensCentre(leftLensCentre, viewport));
+            SetLens(rightLens, FitLensCentre(new Vector2(1 - leftLensCentre.x, leftLensCentre.y), viewport));
         }
+
+        // Rect in one display half, before distortion. Public for headset layout tools.
+        public static Rect EyeViewport(float displayAspect)
+        {
+            float halfAspect = Mathf.Max(0.01f, displayAspect) * 0.5f;
+            var size = halfAspect < ViewAspect ? new Vector2(1, halfAspect / ViewAspect) : new Vector2(ViewAspect / halfAspect, 1);
+            return new Rect((Vector2.one - size) * 0.5f, size);
+        }
+
+        static void FitEye(RawImage image, Rect viewport, float x)
+        {
+            image.rectTransform.anchorMin = new Vector2(x + viewport.xMin * 0.5f, viewport.yMin);
+            image.rectTransform.anchorMax = new Vector2(x + viewport.xMax * 0.5f, viewport.yMax);
+        }
+
+        static Vector2 FitLensCentre(Vector2 centre, Rect viewport) =>
+            new Vector2((centre.x - viewport.x) / viewport.width, (centre.y - viewport.y) / viewport.height);
 
         void PositionEye(Camera eye, float side)
         {
             eye.transform.SetPositionAndRotation(EyeCentrePosition + source.transform.right * (side * interpupillaryDistance), source.transform.rotation);
             eye.cullingMask = normalMask; eye.nearClipPlane = source.nearClipPlane; eye.farClipPlane = source.farClipPlane;
-            eye.aspect = width * 0.5f / height;
-            eye.projectionMatrix = Matrix4x4.Perspective(verticalFieldOfView, eye.aspect, eye.nearClipPlane, eye.farClipPlane);
+            eye.aspect = ViewAspect;
+            eye.projectionMatrix = EyeProjection;
         }
 
         void SetLens(Material material, Vector2 centre)
@@ -224,6 +258,7 @@ namespace ARVisualizer
         void OnDisable() { Application.onBeforeRender -= PrepareFrame; RenderPipelineManager.beginCameraRendering -= BeginCamera; SetMode(false); }
         void OnDestroy()
         {
+            cameraFrame?.Dispose();
             ReleaseTextures();
             if (reprojection != null) Destroy(reprojection);
             if (leftLens != null) Destroy(leftLens);

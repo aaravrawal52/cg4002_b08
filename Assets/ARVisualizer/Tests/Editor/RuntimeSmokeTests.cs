@@ -61,6 +61,10 @@ namespace ARVisualizer.Tests
             Assert.IsTrue(Screen.autorotateToLandscapeLeft && Screen.autorotateToLandscapeRight);
             Assert.That(Vector2.Distance(new Vector2(0.16f, 0.09f), app.DefaultScreenSize), Is.LessThan(0.00001f));
             Assert.IsFalse(app.PlaceModeEnabled, "Start in view mode");
+            Assert.IsFalse(hud.transform.Find("Safe Area/Controls/Place Screen Button").gameObject.activeSelf);
+            Assert.IsFalse(hud.transform.Find("Safe Area/Controls/Undo Button").gameObject.activeSelf);
+            var placement = hud.transform.Find("Safe Area/Controls/Mode Button").GetComponent<Button>();
+            Assert.AreEqual("PLACE SCREEN", placement.GetComponentInChildren<Text>().text);
             lastReply = null;
             app.Execute(new VisualizerCommand { command = "screen.place" }, r => lastReply = r);
             Assert.IsFalse(lastReply.ok);
@@ -68,8 +72,11 @@ namespace ARVisualizer.Tests
             app.Execute(new VisualizerCommand { command = "place.enter" }, r => lastReply = r);
             Assert.IsTrue(lastReply.ok && lastReply.placeModeEnabled);
             Assert.IsTrue(app.PlaceModeEnabled);
-            Click(hud, "Mode Button");
-            Assert.IsFalse(app.PlaceModeEnabled, "Saved button action exits place mode");
+            Assert.IsFalse(hud.transform.Find("Safe Area/Controls/Place Screen Button").gameObject.activeSelf);
+            Assert.AreEqual("PLACE HERE", placement.GetComponentInChildren<Text>().text);
+            Assert.IsFalse(placement.interactable, "Confirmation waits for a valid surface");
+            Assert.Greater(placement.targetGraphic.color.g, placement.targetGraphic.color.r * 2, "Confirmation is green");
+            app.SendLocal("place.exit");
             Click(hud, "Mode Button");
             Assert.IsTrue(app.PlaceModeEnabled, "Saved button action enters place mode");
             app.SendLocal("place.enter"); // Enter/exit commands are idempotent.
@@ -82,7 +89,8 @@ namespace ARVisualizer.Tests
             Assert.IsNotNull(lastReply);
             Assert.IsFalse(lastReply.ok);
             Assert.AreEqual(0, app.CubeCount);
-            app.SendLocal("pointer.off");
+            app.Hand.SetEditorSample(new Vector2(-1, -1), null);
+            Assert.IsTrue(app.UsesCentrePointer, "Normal mode must aim without a tracked hand");
             // The simulator only scans after its input camera moves, just as a user scans with a phone.
             var simulatedCamera = Object.FindAnyObjectByType<SimulationCameraPoseProvider>();
             Assert.IsNotNull(simulatedCamera);
@@ -101,22 +109,37 @@ namespace ARVisualizer.Tests
             Assert.AreEqual("ARFeatheredOcclusionPlane", planeManager.planePrefab.name);
             // A plane can be raycastable one frame before its visualization has built its mesh.
             float meshDeadline = Time.realtimeSinceStartup + 3;
-            while (!TrackedPlaneMeshesReady(planeManager) && Time.realtimeSinceStartup < meshDeadline) yield return null;
+            while (Time.realtimeSinceStartup < meshDeadline)
+            {
+                app.SendLocal("status");
+                if (app.HasTarget && TrackedPlaneMeshesReady(planeManager)) break;
+                float t = Time.realtimeSinceStartup - scanStarted;
+                simulatedCamera.transform.localPosition = startPosition + startRotation * new Vector3(Mathf.Sin(t * 3) * 0.2f, 0, 0);
+                simulatedCamera.transform.localRotation = startRotation * Quaternion.Euler(35 + Mathf.Sin(t * 2) * 8, Mathf.Sin(t * 3) * 16, 0);
+                yield return null;
+            }
             AssertSurfaceVisibility(planeManager, true);
             hud.RefreshStatus();
-            Assert.IsTrue(hud.transform.Find("Safe Area/Controls/Place Screen Button").GetComponent<Button>().interactable);
-            Click(hud, "Place Screen Button");
+            Assert.IsTrue(placement.interactable);
+            yield return NormalControlsChecks.Capture(app, hud, "ARVisualizer-place-here.png");
+            Click(hud, "Mode Button");
             float anchorDeadline = Time.realtimeSinceStartup + 5;
             while (app.IsPlacing && Time.realtimeSinceStartup < anchorDeadline) yield return null;
             Assert.IsFalse(app.IsPlacing, "Anchor creation did not complete");
             Assert.AreEqual(1, app.CubeCount);
+            Assert.IsFalse(app.PlaceModeEnabled, "Successful placement automatically exits place mode");
+            Assert.AreEqual("PLACE SCREEN", placement.GetComponentInChildren<Text>().text);
+            Assert.IsTrue(app.ScreenApps.IsChooserOpen, "Successful placement opens Choose app immediately");
+            Assert.IsFalse(hud.transform.Find("Safe Area/Controls/Place Screen Button").gameObject.activeSelf);
             var anchor = app.GetComponentInChildren<ARAnchor>();
             Assert.IsNotNull(anchor);
             var cube = anchor.GetComponentInChildren<MeshRenderer>();
-            Assert.That(Vector3.Distance(new Vector3(0.16f, 0.09f, 0.005f), cube.transform.localScale), Is.LessThan(0.00001f));
-            Assert.AreEqual(Vector3.back * 0.0025f, cube.transform.localPosition);
+            Assert.That(Vector3.Distance(new Vector3(0.16f, 0.09f, 1), cube.transform.localScale), Is.LessThan(0.00001f));
+            Assert.AreEqual(Vector3.back * ScreenSurface.SurfaceOffset, cube.transform.localPosition);
             var screen = anchor.GetComponentInChildren<ScreenSurface>();
             Assert.IsNotNull(screen);
+            yield return NormalControlsChecks.Exercise(app, hud, screen);
+            app.ScreenApps.Close();
             var hudToggle = hud.GetComponentInChildren<HUDVisibilityToggle>().GetComponent<Button>();
             hudToggle.onClick.Invoke();
             Assert.IsFalse(hud.IsHUDVisible);
@@ -125,7 +148,9 @@ namespace ARVisualizer.Tests
             Assert.IsFalse(hud.IsHUDVisible, "Hand input and Wi-Fi commands must work while the HUD stays hidden");
             hudToggle.onClick.Invoke();
             Assert.IsTrue(hud.IsHUDVisible);
+            yield return PhoneClickChecks.Exercise(app, hud, screen);
             yield return GoggleInteractionChecks.Exercise(app, hud, screen);
+            yield return ScreenAppChecks.Exercise(app, screen);
             for (int i = 0; i < 3; ++i) yield return null;
             hud.RefreshStatus();
             if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
@@ -133,7 +158,8 @@ namespace ARVisualizer.Tests
                 yield return OcclusionRenderChecks.ScreensRespectRealWorldDepth(app, cube);
                 yield return null;
                 hud.RefreshStatus();
-                var canvas = app.GetComponentInChildren<Canvas>();
+                var canvas = hud.GetComponent<Canvas>();
+                var phoneCanvas = app.ModeButton.GetComponentInParent<Canvas>();
                 var rt = new RenderTexture(1280, 720, 24);
                 rt.Create();
                 app.ARCamera.targetTexture = rt;
@@ -142,6 +168,9 @@ namespace ARVisualizer.Tests
                 canvas.planeDistance = 0.2f;
                 canvas.GetComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
                 canvas.scaleFactor = 1;
+                phoneCanvas.renderMode = RenderMode.ScreenSpaceCamera;
+                phoneCanvas.worldCamera = app.ARCamera;
+                phoneCanvas.planeDistance = 0.19f;
                 Canvas.ForceUpdateCanvases();
                 yield return null;
                 app.ARCamera.Render();
@@ -150,6 +179,7 @@ namespace ARVisualizer.Tests
                 var screenshot = new Texture2D(1280, 720, TextureFormat.RGB24, false);
                 screenshot.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
                 screenshot.Apply();
+                PhoneClickChecks.AssertIconVisible(app.ModeButton, app.ARCamera, screenshot);
                 Directory.CreateDirectory("Logs");
                 File.WriteAllBytes("Logs/ARVisualizer-screen-HUD.png", screenshot.EncodeToPNG());
                 hudToggle.onClick.Invoke();
@@ -163,6 +193,7 @@ namespace ARVisualizer.Tests
                 hudToggle.onClick.Invoke();
                 RenderTexture.active = previous;
                 app.ARCamera.targetTexture = null;
+                phoneCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
                 Object.Destroy(screenshot);
                 Object.Destroy(rt);
             }
@@ -183,7 +214,7 @@ namespace ARVisualizer.Tests
             app.SendLocal("place.enter");
             AssertSurfaceVisibility(planeManager, true);
             Assert.AreEqual(1, app.CubeCount);
-            Click(hud, "Undo Button");
+            yield return NormalControlsChecks.DeleteSelectedScreen(app, hud, screen);
             Assert.AreEqual(0, app.CubeCount);
             app.SendLocal("screens.clear");
             Assert.AreEqual(0, app.CubeCount);

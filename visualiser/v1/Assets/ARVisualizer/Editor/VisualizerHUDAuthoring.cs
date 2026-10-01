@@ -46,6 +46,7 @@ namespace ARVisualizer.Editor
         {
             if (app.GetComponent<HandPointerSource>() == null) Undo.AddComponent<HandPointerSource>(app.gameObject);
             if (app.GetComponent<CommunicationManager>() == null) Undo.AddComponent<CommunicationManager>(app.gameObject);
+            if (app.GetComponent<PhonePointerClicks>() == null) Undo.AddComponent<PhonePointerClicks>(app.gameObject);
             var settings = new SerializedObject(app);
             var hud = settings.FindProperty("hud").objectReferenceValue as VisualizerHUD;
             if (hud == null) hud = app.GetComponentInChildren<VisualizerHUD>(true);
@@ -58,6 +59,9 @@ namespace ARVisualizer.Editor
             settings.FindProperty("hud").objectReferenceValue = hud;
             settings.ApplyModifiedProperties();
             HUDToggleAuthoring.ConfigureHUD(hud);
+            DisplayModeAuthoring.ConfigureHUD(hud);
+            DisplayModeAuthoring.EnsureSceneOverlay(app, hud);
+            NormalControlsAuthoring.ConfigureHUD(hud);
             if (hud.GetComponent<GoggleHUD>() == null) Undo.AddComponent<GoggleHUD>(hud.gameObject);
             if (hud.GetComponent<StereoGoggles>() == null) Undo.AddComponent<StereoGoggles>(hud.gameObject);
 
@@ -129,7 +133,7 @@ namespace ARVisualizer.Editor
                 Label("Controls Heading", controls, "LOCAL COMMANDS", 11, muted, new Vector2(0, 98), new Vector2(584, 126));
                 var pointer = Button("Pointer Button", controls, new Vector2(0, 20), new Vector2(136, 92), "POINTER  ON", panel, Color.white, hud.TogglePointer);
                 Bind("pointerLabel", pointer.GetComponentInChildren<Text>());
-                var mode = Button("Mode Button", controls, new Vector2(148, 20), new Vector2(284, 92), "ENTER PLACE", panel, Color.white, hud.TogglePlaceMode);
+                var mode = Button("Mode Button", controls, new Vector2(148, 20), new Vector2(284, 92), "PLACE SCREEN", panel, Color.white, hud.PlacementAction);
                 Bind("modeLabel", mode.GetComponentInChildren<Text>());
                 var place = Button("Place Screen Button", controls, new Vector2(296, 20), new Vector2(460, 92), "PLACE SCREEN", mint, panel, hud.PlaceScreen);
                 place.interactable = false;
@@ -137,7 +141,7 @@ namespace ARVisualizer.Editor
                 var undo = Button("Undo Button", controls, new Vector2(472, 20), new Vector2(584, 92), "UNDO", panel, Color.white, hud.UndoScreen);
                 undo.interactable = false;
                 Bind("undo", undo);
-                Bind("sizeLabel", Label("Screen Size", controls, "16 x 9 x 0.5 cm  /  16:9", 12, muted, Vector2.zero, new Vector2(584, 22)));
+                Bind("sizeLabel", Label("Screen Size", controls, "16 x 9 cm  /  FLAT 16:9", 12, muted, Vector2.zero, new Vector2(584, 22)));
 
                 var aim = Rect("Aim Position", root.transform, Vector2.one * 0.5f, Vector2.one * 0.5f, Vector2.zero, Vector2.zero);
                 var cursor = Rect("Aim Marker", aim, Vector2.one * 0.5f, Vector2.one * 0.5f, new Vector2(-12, -12), new Vector2(12, 12));
@@ -152,6 +156,8 @@ namespace ARVisualizer.Editor
                 root.AddComponent<GoggleHUD>();
                 root.AddComponent<StereoGoggles>();
                 HUDToggleAuthoring.ConfigureHUD(hud);
+                DisplayModeAuthoring.ConfigureHUD(hud);
+                NormalControlsAuthoring.ConfigureHUD(hud);
                 return root;
             }
 

@@ -19,11 +19,17 @@ namespace ARVisualizer.Tests
         }
         [TearDown] public void TearDown() { if (screen != null) Object.DestroyImmediate(screen.gameObject); }
 
-        [Test] public void PrefabDimensionsAndResizeStepsPreserveRatioAndThickness()
+        [Test] public void PrefabDimensionsAndResizeStepsPreserveRatioAndFlatGeometry()
         {
             Assert.That(screen.Width, Is.EqualTo(0.16f).Within(0.000001f));
             Assert.That(screen.Height, Is.EqualTo(0.09f).Within(0.000001f));
-            Assert.AreEqual(Color.black, screen.GetComponentInChildren<Renderer>().sharedMaterial.GetColor("_BaseColor"));
+            Assert.AreEqual("ARVisualizer/Screen Media", screen.GetComponentInChildren<Renderer>().sharedMaterial.shader.name);
+            Assert.AreEqual(1, screen.GetComponentsInChildren<Renderer>(true).Length);
+            Assert.IsEmpty(screen.GetComponentsInChildren<Collider>(true));
+            var mesh = screen.GetComponentInChildren<MeshFilter>().sharedMesh;
+            Assert.AreEqual(4, mesh.vertexCount);
+            Assert.AreEqual(6, mesh.triangles.Length);
+            Assert.That(mesh.bounds.size.z, Is.LessThan(0.000001f));
             Assert.IsTrue(screen.Resize(1));
             Assert.That(screen.Width, Is.EqualTo(0.176f).Within(0.000001f));
             Assert.That(screen.Height, Is.EqualTo(0.099f).Within(0.000001f));
@@ -34,8 +40,8 @@ namespace ARVisualizer.Tests
             Assert.AreEqual(100, screen.SizeSteps);
             Assert.IsFalse(screen.Resize(1));
             Assert.That(screen.Width / screen.Height, Is.EqualTo(16f / 9).Within(0.00001f));
-            Assert.AreEqual(ScreenSurface.Thickness, screen.GetComponent<BoxCollider>().size.z);
-            Assert.AreEqual(ScreenSurface.Thickness, screen.transform.Find("Body").localScale.z);
+            Assert.AreEqual(0, ScreenSurface.Thickness);
+            Assert.AreEqual(-ScreenSurface.SurfaceOffset, screen.transform.Find("Body").localPosition.z);
         }
 
         [TestCase(0, 1, 0, true)]
@@ -50,6 +56,35 @@ namespace ARVisualizer.Tests
             if (!horizontal) Assert.That(Mathf.Abs(Vector3.Dot(pose.rotation * Vector3.right, Vector3.up)), Is.LessThan(0.00001f));
             screen.Initialize(1, horizontal);
             Assert.AreEqual(horizontal, screen.Rotate(15));
+        }
+
+        [TestCase(0.75f)]
+        [TestCase(1f)]
+        [TestCase(2.4f)]
+        public void MediaShapePreservesWidthPoseAndInputAfterResize(float aspect)
+        {
+            screen.transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(45, 20, 15));
+            var position = screen.transform.position; var rotation = screen.transform.rotation;
+            float originalWidth = screen.Width;
+            Assert.IsTrue(screen.SetMediaAspectRatio(aspect));
+            Assert.AreEqual(originalWidth, screen.Width);
+            Assert.IsTrue(screen.Resize(2));
+            Assert.That(screen.Width / screen.Height, Is.EqualTo(aspect).Within(0.00001f));
+            Assert.AreEqual(position, screen.transform.position); Assert.AreEqual(rotation, screen.transform.rotation);
+            var body = screen.transform.Find("Body");
+            Assert.That(body.localScale.y, Is.EqualTo(screen.Height).Within(0.00001f));
+            var expected = new Vector2(0.05f, 0.95f);
+            var point = screen.WorldPoint(expected);
+            Assert.IsTrue(screen.TryRaycast(new Ray(point + screen.FrontNormal, -screen.FrontNormal), 2, out _, out var uv));
+            Assert.Less(Vector2.Distance(uv, expected), 0.0001f);
+            Assert.IsTrue(screen.TryTouch(point, 0.01f, out _, out uv));
+            Assert.Less(Vector2.Distance(uv, expected), 0.0001f);
+            var state = ScreenState.From(screen);
+            Assert.AreEqual(screen.Height, state.heightMetres);
+            Assert.IsFalse(screen.SetMediaAspectRatio(0));
+            Assert.IsFalse(screen.SetMediaAspectRatio(float.NaN));
+            Assert.IsFalse(screen.SetMediaAspectRatio(float.PositiveInfinity));
+            Assert.AreEqual(aspect, screen.AspectRatio);
         }
 
         [Test] public void RayAndTouchReportTheSameFrontFaceUVAfterResizeAndRotation()

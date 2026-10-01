@@ -13,7 +13,9 @@ def main():
     parser.add_argument("host", help="iPhone IPv4 address shown in the HUD, or 127.0.0.1 for Editor")
     parser.add_argument("command", choices=[
         "pointer.on", "pointer.off", "place.enter", "place.exit",
-        "goggle.enter", "goggle.exit", "ui.click",
+        "goggle.enter", "goggle.exit", "ui.click", "ui.rightclick",
+        "ui.press", "ui.release",
+        "app.choose",
         "screen.place", "screen.undo", "screens.clear",
         "adjust.enter", "adjust.exit", "adjust.grow", "adjust.shrink",
         "adjust.rotate.cw", "adjust.rotate.ccw", "status",

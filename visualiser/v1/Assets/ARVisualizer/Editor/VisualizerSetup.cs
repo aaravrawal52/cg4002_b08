@@ -65,6 +65,7 @@ namespace ARVisualizer.Editor
         public static void ValidateProject()
         {
             CreateScene();
+            ScreenAppAuthoring.PrepareAssets();
             if (Resources.Load<Shader>("VisualizerScreen") == null || Resources.Load<Shader>("VisualizerLine") == null)
                 throw new BuildFailedException("Visualizer shaders are missing.");
             if (SceneManager.GetActiveScene().GetRootGameObjects().Count(g => g.GetComponent<ARVisualizerApp>() != null) != 1)
@@ -105,20 +106,45 @@ namespace ARVisualizer.Editor
             var project = new PBXProject();
             project.ReadFromFile(projectPath);
             string framework = project.GetUnityFrameworkTargetGuid();
-            foreach (string name in new[] { "Vision.framework", "ARKit.framework", "CoreVideo.framework", "ImageIO.framework", "QuartzCore.framework" })
+            foreach (string name in new[] { "Vision.framework", "ARKit.framework", "CoreVideo.framework", "ImageIO.framework", "QuartzCore.framework", "Photos.framework", "AVFoundation.framework" })
                 project.AddFrameworkToProject(framework, name, false);
             // Scope ARC to this plugin; other native dependencies keep their own compiler settings.
             string plugin = project.FindFileGuidByProjectPath("Libraries/ARVisualizer/Plugins/iOS/AVHandTracking.mm");
             if (string.IsNullOrEmpty(plugin))
                 throw new BuildFailedException("AVHandTracking.mm was not included in the Xcode project.");
             project.SetCompileFlagsForFile(framework, plugin, new System.Collections.Generic.List<string> { "-fobjc-arc" });
+            string photosPlugin = project.FindFileGuidByProjectPath("Libraries/ARVisualizer/Plugins/iOS/AVPhotoLibrary.mm");
+            if (string.IsNullOrEmpty(photosPlugin)) throw new BuildFailedException("AVPhotoLibrary.mm was not included in the Xcode project.");
+            project.SetCompileFlagsForFile(framework, photosPlugin, new System.Collections.Generic.List<string> { "-fobjc-arc" });
+            PrepareSymbolTools(project, framework);
+            PrepareSymbolTools(project, project.GetUnityMainTargetGuid());
             project.WriteToFile(projectPath);
             string plistPath = Path.Combine(path, "Info.plist");
             var plist = new PlistDocument();
             plist.ReadFromFile(plistPath);
             plist.root.SetString("NSLocalNetworkUsageDescription", "Receive visualiser commands from a controller on your Wi-Fi network.");
+            plist.root.SetString("NSPhotoLibraryUsageDescription", "Browse your photos and videos in AR and display selected items on your virtual screens.");
+            plist.root.SetBoolean("PHPhotoLibraryPreventAutomaticLimitedAccessAlert", true);
             plist.WriteToFile(plistPath);
 #endif
         }
+#if UNITY_IOS
+        static void PrepareSymbolTools(PBXProject project, string target)
+        {
+            // Windows exports / archive transfers may drop Unix executable bits. Repair
+            // them on the Mac at build time, before either target's symbol-processing phase.
+            // No outputs: run on every build, including after another copy of the export.
+            const string name = "AR Visualizer Prepare Symbol Tools";
+            const string script = "set -eu\n" +
+                "for tool in process_symbols.sh usymtool usymtoolarm64; do\n" +
+                "    tool_path=\"$PROJECT_DIR/$tool\"\n" +
+                "    if [ -f \"$tool_path\" ]; then\n" +
+                "        /bin/chmod u+x \"$tool_path\"\n" +
+                "    fi\n" +
+                "done\n";
+            if (string.IsNullOrEmpty(project.GetShellScriptBuildPhaseForTarget(target, name, "/bin/sh", script)))
+                project.InsertShellScriptBuildPhase(0, target, name, "/bin/sh", script);
+        }
+#endif
     }
 }

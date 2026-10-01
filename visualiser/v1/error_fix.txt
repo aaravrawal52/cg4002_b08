@@ -1,0 +1,10 @@
+Build errors fixed. The project now builds successfully in Xcode.
+
+Changed:
+• Removed the @try/@catch block from AVHandTracking.mm, since Objective-C exceptions are disabled for this target.
+• Restored executable permissions on Unity’s symbol processing tools:
+   • process_symbols.sh
+   • usymtool
+   • usymtoolarm64
+
+Validation: BuildProject completed successfully.

@@ -33,7 +33,7 @@ namespace ARVisualizer.Tests
             Assert.IsTrue(Send(app, "adjust.grow").ok);
             Assert.AreEqual(initialSteps + 1, screen.SizeSteps);
             Assert.That(screen.Width / screen.Height, Is.EqualTo(16f / 9).Within(0.00001f));
-            Assert.That(screen.GetComponent<BoxCollider>().size.z, Is.EqualTo(0.005f).Within(0.000001f));
+            Assert.IsNull(screen.GetComponent<Collider>(), "Flat screens use analytic ray/touch tests");
             Assert.IsTrue(Send(app, "adjust.shrink").ok);
             Assert.AreEqual(initialSteps, screen.SizeSteps);
             var before = screen.transform.rotation;
@@ -41,7 +41,7 @@ namespace ARVisualizer.Tests
             Assert.AreEqual(screen.CanRotate, rotate.ok);
             if (screen.CanRotate)
             {
-                Assert.That(Quaternion.Angle(before, screen.transform.rotation), Is.EqualTo(15).Within(0.01f));
+                Assert.That(Quaternion.Angle(before, screen.transform.rotation), Is.EqualTo(5).Within(0.01f));
                 Assert.IsTrue(Send(app, "adjust.rotate.ccw").ok);
             }
 

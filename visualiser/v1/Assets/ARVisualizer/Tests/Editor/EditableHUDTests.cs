@@ -60,7 +60,7 @@ namespace ARVisualizer.Tests
                 Assert.IsTrue(hud.HasRequiredReferences);
                 Assert.AreEqual(1, instance.GetComponentsInChildren<SafeAreaFitter>().Length);
                 string[] names = { "Pointer Button", "Mode Button", "Place Screen Button", "Undo Button" };
-                string[] actions = { "TogglePointer", "TogglePlaceMode", "PlaceScreen", "UndoScreen" };
+                string[] actions = { "TogglePointer", "PlacementAction", "PlaceScreen", "UndoScreen" };
                 for (int i = 0; i < names.Length; ++i)
                 {
                     var button = hud.transform.Find("Safe Area/Controls/" + names[i]).GetComponent<Button>();

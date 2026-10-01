@@ -22,6 +22,10 @@ namespace ARVisualizer
         public bool goggleModeEnabled;
         public bool hudVisible;
         public string pointedHUDButton;
+        public string pointedAppButton;
+        public int appMenuScreenId;
+        public bool appChooserOpen;
+        public bool photoLibraryOpen;
         public int cubeCount;
         public int screenCount;
         public bool adjustModeEnabled;
@@ -74,10 +78,11 @@ namespace ARVisualizer
             command.command = command.command.Trim().ToLowerInvariant();
             switch (command.command)
             {
-                case "pointer.on": case "pointer.off": case "cube.place":
-                case "goggle.enter": case "goggle.exit": case "ui.click":
-                case "place.enter": case "place.exit":
-                case "cube.undo": case "cubes.clear": case "status":
+                case "pointer.on": case "pointer.off":
+                case "goggle.enter": case "goggle.exit": case "ui.click": case "ui.rightclick":
+                case "ui.press": case "ui.release":
+                case "app.choose":
+                case "place.enter": case "place.exit": case "status":
                 case "screen.place": case "screen.undo": case "screens.clear":
                 case "adjust.enter": case "adjust.exit": case "adjust.grow": case "adjust.shrink":
                 case "adjust.rotate.cw": case "adjust.rotate.ccw":

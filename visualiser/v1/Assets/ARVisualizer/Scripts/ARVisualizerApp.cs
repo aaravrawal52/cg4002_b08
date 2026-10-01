@@ -1,9 +1,5 @@
-using System;
 using System.Collections.Generic;
-using Unity.XR.CoreUtils;
 using UnityEngine;
-using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.XR;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 using UnityEngine.Serialization;
@@ -14,10 +10,10 @@ namespace ARVisualizer
     [DisallowMultipleComponent]
     [RequireComponent(typeof(HandPointerSource), typeof(CommunicationManager))]
     [AddComponentMenu("AR Visualizer/Application")]
-    public sealed class ARVisualizerApp : MonoBehaviour
+    public sealed partial class ARVisualizerApp : MonoBehaviour
     {
         [Header("Screen placement")]
-        [Tooltip("Editable 16:9 screen prefab. Its Size Steps control the initial dimensions.")]
+        [Tooltip("Editable flat screen prefab. Size Steps set its width; loaded media determines its aspect ratio (16:9 when black).")]
         [SerializeField] ScreenSurface screenPrefab;
         [FormerlySerializedAs("maximumCubes")]
         [SerializeField, Min(1)] int maximumScreens = 100;
@@ -46,12 +42,19 @@ namespace ARVisualizer
         [Tooltip("Fingertip distance from the screen face needed to begin a touch. LiDAR contact is approximate.")]
         [SerializeField, Range(0.003f, 0.03f)] float touchToleranceMetres = 0.012f;
         [Tooltip("Angle per rotate command, for screens on horizontal surfaces only.")]
-        [SerializeField, Range(1, 90)] float rotationStepDegrees = 15;
+        [SerializeField, Range(1, 90)] float rotationStepDegrees = 5;
         public HandPointerSource Hand { get; private set; }
         public CommunicationManager Communication { get; private set; }
         public Camera ARCamera { get; private set; }
         public GoggleHUD GoggleHUD { get; private set; }
+        public ScreenAppMenu ScreenApps { get; private set; }
+        public PhonePointerClicks PhoneClicks { get; private set; }
+        public DisplayModeButton ModeButton { get; private set; }
         public bool GoggleModeEnabled => GoggleHUD != null && GoggleHUD.IsActive;
+        public bool UsesCentrePointer => !GoggleModeEnabled && Hand != null && !Hand.IsTracked;
+        public bool PointerReady => Hand != null && Hand.PointerEnabled && (Hand.IsTracked || UsesCentrePointer)
+            && ARSession.state == ARSessionState.SessionTracking;
+        public Vector2 PointerViewportPoint => Hand != null && Hand.IsTracked ? Hand.ViewportPoint : Vector2.one * 0.5f;
         public bool HasTarget { get; private set; }
         public bool IsPlacing { get; private set; }
         public bool PlaceModeEnabled { get; private set; }
@@ -59,6 +62,15 @@ namespace ARVisualizer
         public int CubeCount => ScreenCount; // Compatibility with earlier controllers.
         public IReadOnlyList<ScreenSurface> Screens => placed;
         public ScreenSurface RayScreen { get; private set; }
+        public ScreenSurface PointedScreen
+        {
+            get
+            {
+                if (RayScreen != null) return RayScreen;
+                if (ScreenApps != null && !ScreenApps.IsModal && ScreenApps.IsPointerOverUI) return ScreenApps.Target;
+                return null;
+            }
+        }
         public ScreenSurface InputScreen { get; private set; }
         public ScreenSurface AdjustedScreen { get; private set; }
         public bool AdjustModeEnabled => AdjustedScreen != null;
@@ -68,6 +80,7 @@ namespace ARVisualizer
         public string TrackingStatus => ARSession.state == ARSessionState.SessionTracking
             ? "AR tracking" : ARSession.state + " / " + ARSession.notTrackingReason;
 
+        ARSceneRig rig;
         ARPlaneManager planes;
         ARRaycastManager raycasts;
         ARAnchorManager anchors;
@@ -75,7 +88,6 @@ namespace ARVisualizer
         bool occlusionSettingsDirty;
         readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
         readonly List<ScreenSurface> placed = new List<ScreenSurface>();
-        readonly List<InputAction> poseActions = new List<InputAction>();
         Material lineMaterial;
         LineRenderer beam, footprint;
         Pose targetPose;
@@ -90,6 +102,17 @@ namespace ARVisualizer
 
         void Awake()
         {
+            ConfigurePhoneDisplay();
+            InitializeARRig();
+            InitializeHandPointer();
+            InitializeCommunication();
+            InitializeHUD();
+            InitializeScreenApps();
+            InitializePhoneControls();
+        }
+
+        static void ConfigurePhoneDisplay()
+        {
             Screen.autorotateToPortrait = false;
             Screen.autorotateToPortraitUpsideDown = false;
             Screen.autorotateToLandscapeLeft = true;
@@ -97,64 +120,41 @@ namespace ARVisualizer
             Screen.orientation = ScreenOrientation.AutoRotation;
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
             Application.targetFrameRate = 60;
+        }
 
-            lineMaterial = new Material(Resources.Load<Shader>("VisualizerLine"));
-            var sessionObject = new GameObject("AR Session");
-            sessionObject.transform.SetParent(transform);
-            sessionObject.SetActive(false);
-            var session = sessionObject.AddComponent<ARSession>();
-            sessionObject.AddComponent<ARInputManager>();
-
-            var originObject = new GameObject("XR Origin");
-            originObject.transform.SetParent(transform);
-            originObject.SetActive(false);
-            var origin = originObject.AddComponent<XROrigin>();
-            var offset = new GameObject("Camera Offset");
-            offset.transform.SetParent(originObject.transform, false);
-            var cameraObject = new GameObject("AR Camera", typeof(Camera));
-            cameraObject.tag = "MainCamera";
-            cameraObject.transform.SetParent(offset.transform, false);
-            ARCamera = cameraObject.GetComponent<Camera>();
-            ARCamera.nearClipPlane = 0.05f;
-            ARCamera.farClipPlane = 30;
-            ARCamera.clearFlags = CameraClearFlags.SolidColor;
-            ARCamera.backgroundColor = new Color(0.025f, 0.04f, 0.06f);
-            cameraObject.AddComponent<AudioListener>();
-            var cameraManager = cameraObject.AddComponent<ARCameraManager>();
-            cameraManager.requestedFacingDirection = CameraFacingDirection.World;
-            // Write real-world depth before opaque screens are drawn, so normal depth testing hides them.
-            cameraManager.requestedBackgroundRenderingMode = CameraBackgroundRenderingMode.BeforeOpaques;
-            // ARCameraBackground caches this component in Awake: create it before the background is activated.
-            occlusion = cameraObject.AddComponent<AROcclusionManager>();
+        void InitializeARRig()
+        {
+            rig = new ARSceneRig(transform, surfaceVisualizationPrefab);
+            ARCamera = rig.Camera;
+            planes = rig.Planes;
+            raycasts = rig.Raycasts;
+            anchors = rig.Anchors;
+            occlusion = rig.Occlusion;
             ApplyOcclusionSettings();
-            cameraObject.AddComponent<ARCameraBackground>();
-            var pose = cameraObject.AddComponent<TrackedPoseDriver>();
-            pose.positionInput = Action("Position", "<HandheldARInputDevice>/devicePosition", "Vector3");
-            pose.rotationInput = Action("Rotation", "<HandheldARInputDevice>/deviceRotation", "Quaternion");
-            // AR Foundation 6.6's handheld layout exposes pose only; ARSession gates placement.
-            pose.ignoreTrackingState = true;
-            origin.Camera = ARCamera;
-            origin.CameraFloorOffsetObject = offset;
-            origin.RequestedTrackingOriginMode = XROrigin.TrackingOriginMode.Device;
-            origin.CameraYOffset = 0;
-            planes = originObject.AddComponent<ARPlaneManager>();
-            planes.planePrefab = surfaceVisualizationPrefab;
-            planes.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
-            raycasts = originObject.AddComponent<ARRaycastManager>();
-            anchors = originObject.AddComponent<ARAnchorManager>();
-            originObject.SetActive(true);
-            sessionObject.SetActive(true);
+            rig.Activate();
+        }
 
+        void InitializeHandPointer()
+        {
             Hand = GetComponent<HandPointerSource>();
-            Hand.Session = session;
-            Hand.TrackingOrigin = offset.transform;
+            Hand.Session = rig.Session;
+            Hand.TrackingOrigin = rig.CameraOffset;
             Hand.ARCamera = ARCamera;
             Hand.SetPointerEnabled(pointerInitiallyEnabled);
+            lineMaterial = new Material(Resources.Load<Shader>("VisualizerLine"));
             beam = CreateLine("Hand ray", rayWidth, validRayColor, false, transform);
             footprint = CreateLine("Screen footprint", footprintWidth, validRayColor, true, transform);
+        }
+
+        void InitializeCommunication()
+        {
             Communication = GetComponent<CommunicationManager>();
             if (Communication == null) Communication = gameObject.AddComponent<CommunicationManager>();
             Communication.CommandReceived += Execute;
+        }
+
+        void InitializeHUD()
+        {
             if (hud == null) hud = GetComponentInChildren<VisualizerHUD>(true);
             if (hud != null)
             {
@@ -166,11 +166,21 @@ namespace ARVisualizer
             else Debug.LogError("Assign a saved HUD. Use Tools > AR Visualizer > Add editable HUD to current scene.", this);
         }
 
-        InputActionProperty Action(string name, string binding, string control)
+        void InitializeScreenApps()
         {
-            var action = new InputAction(name, InputActionType.Value, binding, expectedControlType: control);
-            poseActions.Add(action);
-            return new InputActionProperty(action);
+            var menuPrefab = Resources.Load<ScreenAppMenu>("ScreenAppMenu");
+            if (menuPrefab == null) return;
+            ScreenApps = Instantiate(menuPrefab, transform);
+            ScreenApps.Initialize(this);
+        }
+
+        void InitializePhoneControls()
+        {
+            PhoneClicks = GetComponent<PhonePointerClicks>();
+            if (PhoneClicks == null) PhoneClicks = gameObject.AddComponent<PhonePointerClicks>();
+            PhoneClicks.Initialize(this, hud);
+            ModeButton = GetComponentInChildren<DisplayModeButton>(true);
+            if (ModeButton != null) ModeButton.Initialize(hud);
         }
 
         LineRenderer CreateLine(string name, float width, Color color, bool loop, Transform parent)
@@ -192,10 +202,23 @@ namespace ARVisualizer
         {
             if (occlusionSettingsDirty) ApplyOcclusionSettings();
             UpdateSurfaceVisuals();
+            RefreshInteractionTargets();
+            DrawPointer();
+        }
+
+        void RefreshInteractionTargets()
+        {
+            // Menus consume the ray before screen faces are tested. Newly opened menus
+            // then need a second pointer refresh before placement chooses a surface.
+            ScreenApps?.RefreshPointer();
             GoggleHUD?.RefreshPointer();
             RefreshScreenInput();
+            var menuScreen = RayScreen;
+            if (menuScreen == null && InputScreen != null && InputScreen.InputKind == ScreenInputKind.Touch)
+                menuScreen = InputScreen;
+            ScreenApps?.ObserveRayScreen(menuScreen);
+            ScreenApps?.RefreshPointer();
             RefreshTarget();
-            DrawPointer();
         }
 
         void OnValidate() => occlusionSettingsDirty = true;
@@ -222,7 +245,7 @@ namespace ARVisualizer
             SurfaceCount = 0;
             foreach (var plane in planes.trackables)
             {
-                bool tracked = plane.trackingState == TrackingState.Tracking && plane.subsumedBy == null;
+                bool tracked = IsTrackedPlane(plane);
                 if (tracked) ++SurfaceCount;
                 var renderer = plane.GetComponent<MeshRenderer>();
                 // Keep ARPlane and its mesh updater active so tracking continues in view mode.
@@ -233,7 +256,11 @@ namespace ARVisualizer
 
         void SetPlaceMode(bool enabled)
         {
-            if (enabled) ExitAdjustMode();
+            if (enabled)
+            {
+                ExitAdjustMode();
+                ScreenApps?.Close();
+            }
             if (PlaceModeEnabled == enabled) return;
             PlaceModeEnabled = enabled;
             retainedPlane = null;
@@ -245,36 +272,32 @@ namespace ARVisualizer
         void RefreshTarget()
         {
             HasTarget = false;
-            if (ARSession.state != ARSessionState.SessionTracking || (Hand.PointerEnabled && !Hand.IsTracked))
-            { retainedPlane = null; return; }
+            bool menuBlocksPlacement = ScreenApps != null && ScreenApps.BlocksPointer;
+            bool trackingUnavailable = ARSession.state != ARSessionState.SessionTracking || (Hand.PointerEnabled && !PointerReady);
+            if (menuBlocksPlacement || trackingUnavailable)
+            {
+                retainedPlane = null;
+                return;
+            }
             if (GoggleModeEnabled && GoggleHUD.IsPointerOverHUD)
             {
-                // Keep the last world target while aiming at Place Screen on the floating panel.
-                if (PlaceModeEnabled && retainedPlane != null && retainedPlane.trackingState == TrackingState.Tracking && retainedPlane.subsumedBy == null)
-                {
-                    var position = retainedPlane.transform.TransformPoint(retainedLocalPoint);
-                    var normal = retainedPlane.transform.up;
-                    if (Vector3.Dot(normal, ARCamera.transform.position - position) < 0) normal = -normal;
-                    if (Vector3.Distance(position, ARCamera.transform.position) <= maximumPlacementDistance)
-                    {
-                        targetPose = ScreenSurface.PlacementPose(position, normal, ARCamera.transform.position, out targetOnHorizontal);
-                        HasTarget = true;
-                    }
-                }
+                RefreshRetainedTarget();
                 return;
             }
             retainedPlane = null;
             if (RayScreen != null) return;
-            Vector2 viewport = Hand.PointerEnabled ? Hand.ViewportPoint : new Vector2(0.5f, 0.5f);
-            if (!raycasts.Raycast(new Vector2(viewport.x * Screen.width, viewport.y * Screen.height), hits, TrackableType.PlaneWithinPolygon)) return;
+            Vector2 viewport = Hand.PointerEnabled ? PointerViewportPoint : new Vector2(0.5f, 0.5f);
+            // Native screen-point raycasts assume the physical phone aspect. Goggles use
+            // the calibrated 4:3 camera ray so surfaces agree with the displayed hand/video.
+            bool hitSurface = GoggleModeEnabled
+                ? raycasts.Raycast(ARCamera.ViewportPointToRay(viewport), hits, TrackableType.PlaneWithinPolygon)
+                : raycasts.Raycast(new Vector2(viewport.x * Screen.width, viewport.y * Screen.height), hits, TrackableType.PlaneWithinPolygon);
+            if (!hitSurface) return;
             foreach (var hit in hits)
             {
                 var plane = planes.GetPlane(hit.trackableId);
-                if (plane == null || plane.trackingState != TrackingState.Tracking || plane.subsumedBy != null || hit.distance > maximumPlacementDistance) continue;
-                Vector3 normal = plane.transform.up;
-                if (Vector3.Dot(normal, ARCamera.transform.position - hit.pose.position) < 0) normal = -normal;
-                targetPose = ScreenSurface.PlacementPose(hit.pose.position, normal, ARCamera.transform.position, out targetOnHorizontal);
-                HasTarget = true;
+                if (!IsTrackedPlane(plane) || hit.distance > maximumPlacementDistance) continue;
+                SetPlacementTarget(plane, hit.pose.position);
                 if (GoggleModeEnabled && PlaceModeEnabled)
                 {
                     retainedPlane = plane;
@@ -284,30 +307,65 @@ namespace ARVisualizer
             }
         }
 
+        static bool IsTrackedPlane(ARPlane plane) =>
+            plane != null && plane.trackingState == TrackingState.Tracking && plane.subsumedBy == null;
+
+        void RefreshRetainedTarget()
+        {
+            // Keep the last world target while aiming at Place Screen on the floating HUD.
+            if (!PlaceModeEnabled || !IsTrackedPlane(retainedPlane)) return;
+            var position = retainedPlane.transform.TransformPoint(retainedLocalPoint);
+            if (Vector3.Distance(position, ARCamera.transform.position) <= maximumPlacementDistance)
+                SetPlacementTarget(retainedPlane, position);
+        }
+
+        void SetPlacementTarget(ARPlane plane, Vector3 position)
+        {
+            var normal = plane.transform.up;
+            if (Vector3.Dot(normal, ARCamera.transform.position - position) < 0) normal = -normal;
+            targetPose = ScreenSurface.PlacementPose(position, normal, ARCamera.transform.position, out targetOnHorizontal);
+            HasTarget = true;
+        }
+
         void DrawPointer()
         {
-            beam.enabled = Hand.PointerEnabled && Hand.IsTracked && ARSession.state == ARSessionState.SessionTracking;
+            beam.enabled = PointerReady;
             if (beam.enabled)
             {
-                Vector2 point = Hand.ViewportPoint;
+                Vector2 point = PointerViewportPoint;
                 var ray = ARCamera.ViewportPointToRay(point);
                 // The ray tracks the index MCP (base knuckle); fingertip depth is reserved for touch.
-                Vector3 start = Hand.RayOrigin;
+                Vector3 start = Hand.IsTracked ? Hand.RayOrigin : ray.GetPoint(0.05f);
                 beam.positionCount = 2;
                 beam.SetPosition(0, start);
-                beam.SetPosition(1, GoggleModeEnabled && GoggleHUD.IsPointerOverHUD ? GoggleHUD.PointerWorldPosition
-                    : RayScreen != null ? RayScreen.WorldPoint(rayScreenUV) : HasTarget ? targetPose.position : ray.GetPoint(1.5f));
-                beam.startColor = beam.endColor = HasTarget || RayScreen != null || (GoggleModeEnabled && GoggleHUD.HoveredButton != null) ? validRayColor : noSurfaceRayColor;
+                beam.SetPosition(1, PointerEndPosition(ray));
+                bool hasButton = (ScreenApps != null && ScreenApps.HoveredButton != null)
+                    || (GoggleModeEnabled && GoggleHUD.HoveredButton != null);
+                beam.startColor = beam.endColor = HasTarget || RayScreen != null || hasButton ? validRayColor : noSurfaceRayColor;
             }
+            DrawPlacementFootprint();
+        }
+
+        Vector3 PointerEndPosition(Ray ray)
+        {
+            if (ScreenApps != null && ScreenApps.IsPointerOverUI) return ScreenApps.PointerWorldPosition;
+            if (GoggleModeEnabled && GoggleHUD.IsPointerOverHUD) return GoggleHUD.PointerWorldPosition;
+            if (RayScreen != null) return RayScreen.WorldPoint(rayScreenUV);
+            if (HasTarget) return targetPose.position;
+            return ray.GetPoint(1.5f);
+        }
+
+        void DrawPlacementFootprint()
+        {
             footprint.enabled = PlaceModeEnabled && HasTarget;
             if (!footprint.enabled) return;
-            Vector2 h = DefaultScreenSize * 0.5f;
+            Vector2 halfSize = DefaultScreenSize * 0.5f;
             footprint.positionCount = 4;
-            float z = -ScreenSurface.Thickness - 0.001f;
-            footprint.SetPosition(0, targetPose.position + targetPose.rotation * new Vector3(-h.x, -h.y, z));
-            footprint.SetPosition(1, targetPose.position + targetPose.rotation * new Vector3(h.x, -h.y, z));
-            footprint.SetPosition(2, targetPose.position + targetPose.rotation * new Vector3(h.x, h.y, z));
-            footprint.SetPosition(3, targetPose.position + targetPose.rotation * new Vector3(-h.x, h.y, z));
+            float z = -ScreenSurface.SurfaceOffset - 0.001f;
+            footprint.SetPosition(0, targetPose.position + targetPose.rotation * new Vector3(-halfSize.x, -halfSize.y, z));
+            footprint.SetPosition(1, targetPose.position + targetPose.rotation * new Vector3(halfSize.x, -halfSize.y, z));
+            footprint.SetPosition(2, targetPose.position + targetPose.rotation * new Vector3(halfSize.x, halfSize.y, z));
+            footprint.SetPosition(3, targetPose.position + targetPose.rotation * new Vector3(-halfSize.x, halfSize.y, z));
         }
 
         void RefreshScreenInput()
@@ -318,37 +376,64 @@ namespace ARVisualizer
             {
                 var previousInput = InputScreen;
                 RayScreen = InputScreen = null;
-                float closestRay = maximumPlacementDistance;
-                float closestTouch = float.PositiveInfinity;
                 Vector2 touchUV = default;
                 if (ARSession.state == ARSessionState.SessionTracking)
-                {
-                    var ray = ARCamera.ViewportPointToRay(Hand.ViewportPoint);
-                    foreach (var screen in placed)
-                    {
-                        if (screen == null || !screen.isActiveAndEnabled) continue;
-                        if (!(GoggleModeEnabled && GoggleHUD.IsPointerOverHUD) && Hand.PointerEnabled && Hand.IsTracked && screen.TryRaycast(ray, closestRay, out var distance, out var uv))
-                        { closestRay = distance; RayScreen = screen; rayScreenUV = uv; }
-                        float tolerance = previousInput == screen && screen.InputKind == ScreenInputKind.Touch ? touchToleranceMetres * 1.5f : touchToleranceMetres;
-                        bool inFront = Vector3.Dot(ARCamera.transform.position - screen.transform.position, screen.FrontNormal) > ScreenSurface.Thickness;
-                        if (inFront && Hand.HasTipDepth && screen.TryTouch(Hand.TipWorldPosition, tolerance, out var separation, out var contact) && separation < closestTouch)
-                        { closestTouch = separation; InputScreen = screen; touchUV = contact; }
-                    }
-                }
+                    FindScreenInput(previousInput, out touchUV);
+
                 bool touching = InputScreen != null;
                 if (!touching) InputScreen = RayScreen;
-                // Event handlers may issue undo/clear commands, so do not enumerate a mutable list here.
-                for (int i = placed.Count - 1; i >= 0; --i)
-                {
-                    if (i >= placed.Count) continue;
-                    var screen = placed[i];
-                    if (screen != null) screen.SetInput(screen == InputScreen ? touching ? ScreenInputKind.Touch : ScreenInputKind.Ray : ScreenInputKind.None, touching ? touchUV : rayScreenUV);
-                }
+                DispatchScreenInput(touching ? ScreenInputKind.Touch : ScreenInputKind.Ray, touching ? touchUV : rayScreenUV);
+
                 // A prefab event may have disabled its screen while input was being dispatched.
                 if (RayScreen != null && !RayScreen.isActiveAndEnabled) RayScreen = null;
                 if (InputScreen != null && (!InputScreen.isActiveAndEnabled || InputScreen.InputKind == ScreenInputKind.None)) InputScreen = null;
             }
             finally { refreshingScreenInput = false; }
+        }
+
+        void FindScreenInput(ScreenSurface previousInput, out Vector2 touchUV)
+        {
+            touchUV = default;
+            float closestRay = maximumPlacementDistance;
+            float closestTouch = float.PositiveInfinity;
+            var ray = ARCamera.ViewportPointToRay(PointerViewportPoint);
+            bool rayAvailable = PointerReady && !(ScreenApps != null && ScreenApps.BlocksPointer)
+                && !(GoggleModeEnabled && GoggleHUD.IsPointerOverHUD);
+            bool touchAvailable = Hand.HasTipDepth && !(ScreenApps != null && ScreenApps.BlocksTouch);
+
+            foreach (var screen in placed)
+            {
+                if (screen == null || !screen.isActiveAndEnabled) continue;
+                if (rayAvailable && screen.TryRaycast(ray, closestRay, out var distance, out var uv))
+                {
+                    closestRay = distance;
+                    RayScreen = screen;
+                    rayScreenUV = uv;
+                }
+
+                if (!touchAvailable) continue;
+                bool continuingTouch = previousInput == screen && screen.InputKind == ScreenInputKind.Touch;
+                float tolerance = continuingTouch ? touchToleranceMetres * 1.5f : touchToleranceMetres;
+                bool inFront = Vector3.Dot(ARCamera.transform.position - screen.transform.position, screen.FrontNormal) > ScreenSurface.SurfaceOffset;
+                if (inFront && screen.TryTouch(Hand.TipWorldPosition, tolerance, out var separation, out var contact) && separation < closestTouch)
+                {
+                    closestTouch = separation;
+                    InputScreen = screen;
+                    touchUV = contact;
+                }
+            }
+        }
+
+        void DispatchScreenInput(ScreenInputKind kind, Vector2 uv)
+        {
+            // Events can delete screens or issue commands. Preserve the reentrancy guard
+            // in RefreshScreenInput and tolerate a shrinking list during dispatch.
+            for (int i = placed.Count - 1; i >= 0; --i)
+            {
+                if (i >= placed.Count) continue;
+                var screen = placed[i];
+                if (screen != null) screen.SetInput(screen == InputScreen ? kind : ScreenInputKind.None, uv);
+            }
         }
 
         void ExitAdjustMode()
@@ -364,11 +449,10 @@ namespace ARVisualizer
             RayScreen = InputScreen = null;
         }
 
-        public void SendLocal(string command) => Execute(new VisualizerCommand { command = command }, _ => { });
-
         bool SetGoggleMode(bool enabled)
         {
             if (GoggleHUD == null) return false;
+            ScreenApps?.MenuInput.CancelPress();
             if (enabled == GoggleModeEnabled && (enabled || !Hand.PointerLockedOn)) return true;
             if (enabled) pointerBeforeGoggles = Hand.PointerEnabled;
             if (!GoggleHUD.SetMode(enabled)) return false;
@@ -381,125 +465,64 @@ namespace ARVisualizer
             return true;
         }
 
-        public async void Execute(VisualizerCommand command, System.Action<CommandReply> complete)
-        {
-            bool ok = true;
-            string message;
-            try
-            {
-                GoggleHUD?.RefreshPointer();
-                RefreshScreenInput();
-                RefreshTarget();
-                switch (command.command)
-                {
-                    case "goggle.enter":
-                        ok = SetGoggleMode(true);
-                        message = ok ? "Goggle mode / point at a HUD button and send ui.click" : "Floating HUD is unavailable"; break;
-                    case "goggle.exit":
-                        ok = SetGoggleMode(false);
-                        message = ok ? "Normal mode / screen HUD restored" : "HUD is unavailable"; break;
-                    case "ui.click":
-                        if (GoggleHUD == null) { ok = false; message = "HUD is unavailable"; break; }
-                        hud.RefreshStatus();
-                        ok = GoggleHUD.TryClick(out message); break;
-                    case "pointer.on": Hand.SetPointerEnabled(true); message = "Hand pointer enabled"; break;
-                    case "pointer.off":
-                        if (GoggleModeEnabled) { ok = false; message = "The ray pointer stays on in goggle mode"; break; }
-                        Hand.SetPointerEnabled(false); message = "Pointer off / aim with centre crosshair"; break;
-                    case "place.enter": SetPlaceMode(true); message = "Place mode / move slowly to scan a flat surface"; break;
-                    case "place.exit": SetPlaceMode(false); message = "View mode / surface highlights hidden"; break;
-                    case "cube.place": case "screen.place":
-                        if (!PlaceModeEnabled) { ok = false; message = "Enter place mode first (place.enter)"; break; }
-                        RefreshTarget();
-                        if (IsPlacing) { ok = false; message = "Placement already in progress"; break; }
-                        if (!HasTarget) { ok = false; message = "Aim at a detected flat surface"; break; }
-                        if (ScreenCount >= maximumScreens) { ok = false; message = "Screen limit reached; undo or clear screens"; break; }
-                        if (screenPrefab == null) { ok = false; message = "Assign the Screen prefab in the application Inspector"; break; }
-                        IsPlacing = true;
-                        int version = placementGeneration;
-                        bool horizontalSupport = targetOnHorizontal;
-                        var result = await anchors.TryAddAnchorAsync(targetPose);
-                        if (this == null || version != placementGeneration || !isActiveAndEnabled)
-                        {
-                            if (result.status.IsSuccess() && result.value != null) Destroy(result.value.gameObject);
-                            ok = false; message = "Placement cancelled";
-                        }
-                        else if (!result.status.IsSuccess()) { ok = false; message = "Could not create AR anchor; try again"; }
-                        else
-                        {
-                            var screen = Instantiate(screenPrefab, result.value.transform);
-                            screen.transform.localPosition = Vector3.zero;
-                            screen.transform.localRotation = Quaternion.identity;
-                            screen.transform.localScale = Vector3.one;
-                            screen.Initialize(nextScreenId++, horizontalSupport);
-                            screen.name = "Screen " + screen.Id;
-                            placed.Add(screen);
-                            message = "Screen placed / " + (screen.Width * 100).ToString("0.#") + " x " + (screen.Height * 100).ToString("0.#") + " cm";
-                        }
-                        IsPlacing = false;
-                        break;
-                    case "cube.undo": case "screen.undo":
-                        if (IsPlacing) { ++placementGeneration; message = "Pending placement cancelled"; break; }
-                        if (ScreenCount == 0) { ok = false; message = "No screens to undo"; break; }
-                        RemoveLast(); message = "Last screen removed"; break;
-                    case "cubes.clear": case "screens.clear":
-                        ++placementGeneration;
-                        while (ScreenCount > 0) RemoveLast();
-                        message = "All screens cleared"; break;
-                    case "adjust.enter":
-                        if (AdjustModeEnabled) { message = "Already adjusting screen " + AdjustedScreen.Id; break; }
-                        if (IsPlacing) { ok = false; message = "Wait for placement to complete"; break; }
-                        if (RayScreen == null) { ok = false; message = "Point the knuckle ray at a screen first"; break; }
-                        SetPlaceMode(false);
-                        AdjustedScreen = RayScreen;
-                        AdjustedScreen.IsAdjusting = true;
-                        message = "Adjusting screen " + AdjustedScreen.Id; break;
-                    case "adjust.exit": ExitAdjustMode(); message = "Adjust mode closed"; break;
-                    case "adjust.grow": case "adjust.shrink":
-                        if (!AdjustModeEnabled) { ok = false; message = "Enter adjust mode first (adjust.enter)"; break; }
-                        ok = AdjustedScreen.Resize(command.command == "adjust.grow" ? 1 : -1);
-                        message = ok ? "Screen size / " + (AdjustedScreen.Width * 100).ToString("0.#") + " x " + (AdjustedScreen.Height * 100).ToString("0.#") + " cm" : "Screen size limit reached";
-                        break;
-                    case "adjust.rotate.cw": case "adjust.rotate.ccw":
-                        if (!AdjustModeEnabled) { ok = false; message = "Enter adjust mode first (adjust.enter)"; break; }
-                        ok = AdjustedScreen.Rotate(command.command == "adjust.rotate.cw" ? -rotationStepDegrees : rotationStepDegrees);
-                        message = ok ? "Screen rotated" : "Only screens on horizontal surfaces can rotate"; break;
-                    case "status": message = (AdjustModeEnabled ? "Adjust mode; " : PlaceModeEnabled ? "Place mode; " : "View mode; ") + TrackingStatus + "; " + Hand.Status + "; " + Communication.Status; break;
-                    default: ok = false; message = "Unknown command"; break;
-                }
-            }
-            catch (Exception e) { IsPlacing = false; ok = false; message = "Command failed: " + e.Message; Debug.LogException(e); }
-            GoggleHUD?.RefreshPointer();
-            RefreshScreenInput();
-            Feedback = message;
-            complete?.Invoke(new CommandReply { ok = ok, message = message, pointerEnabled = Hand.PointerEnabled,
-                placeModeEnabled = PlaceModeEnabled, cubeCount = ScreenCount, screenCount = ScreenCount,
-                goggleModeEnabled = GoggleModeEnabled, hudVisible = hud != null && hud.IsHUDVisible,
-                pointedHUDButton = GoggleModeEnabled ? GoggleHUD.TargetName : "",
-                adjustModeEnabled = AdjustModeEnabled, pointedScreenId = RayScreen != null ? RayScreen.Id : 0,
-                interaction = ScreenInteractionState.From(InputScreen), adjustedScreen = ScreenState.From(AdjustedScreen) });
-        }
-
         void RemoveLast()
         {
             var screen = placed[placed.Count - 1];
             placed.RemoveAt(placed.Count - 1);
+            ReleaseScreen(screen);
+        }
+
+        /// <summary>Removes this specific placed screen, including its anchor and media.</summary>
+        public bool DeleteScreen(ScreenSurface screen)
+        {
+            if (screen == null || !placed.Remove(screen)) return false;
+            int id = screen.Id;
+            ReleaseScreen(screen);
+            Feedback = "Screen " + id + " deleted";
+            hud.RefreshStatus();
+            return true;
+        }
+
+        void ReleaseScreen(ScreenSurface screen)
+        {
             if (screen == null) return;
+            if (ScreenApps != null && ScreenApps.Target == screen) ScreenApps.Close();
             if (AdjustedScreen == screen) ExitAdjustMode();
             if (InputScreen == screen) InputScreen = null;
             if (RayScreen == screen) RayScreen = null;
             screen.SetInput(ScreenInputKind.None, Vector2.zero);
+            screen.gameObject.SetActive(false);
             var anchor = screen.GetComponentInParent<ARAnchor>();
-            if (anchor == null) { Destroy(screen.gameObject); return; }
+            if (anchor == null)
+            {
+                Destroy(screen.gameObject);
+                return;
+            }
             if (!anchors.TryRemoveAnchor(anchor)) Destroy(anchor.gameObject);
         }
 
-        void OnApplicationPause(bool paused) { if (paused) { ++placementGeneration; retainedPlane = null; GoggleHUD?.ClearPointer(); ClearScreenInput(); } }
-        void OnDisable() { ++placementGeneration; retainedPlane = null; if (Hand != null) SetGoggleMode(false); ClearScreenInput(); }
+        void OnApplicationPause(bool paused)
+        {
+            if (!paused) return;
+            ++placementGeneration;
+            retainedPlane = null;
+            GoggleHUD?.ClearPointer();
+            ClearScreenInput();
+        }
+
+        void OnDisable()
+        {
+            ++placementGeneration;
+            retainedPlane = null;
+            ScreenApps?.Close();
+            if (Hand != null) SetGoggleMode(false);
+            ClearScreenInput();
+        }
+
         void OnDestroy()
         {
             if (Communication != null) Communication.CommandReceived -= Execute;
-            foreach (var action in poseActions) action.Dispose();
+            rig?.Dispose();
             if (lineMaterial != null) Destroy(lineMaterial);
         }
     }

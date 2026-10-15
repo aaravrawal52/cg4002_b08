@@ -89,8 +89,7 @@ def quantization():
             from pytorch_nndct.apis import Inspector
 
             # create inspector
-            # inspector = Inspector("0x603000b16013831") # by fingerprint
-            inspector = Inspector("0x101000016010404")  # by name
+            inspector = Inspector("0x101000016010404")
             # start to inspect
             inspector.inspect(quant_model, (dummy_input,), device=device)
             sys.exit()

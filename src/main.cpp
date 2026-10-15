@@ -49,8 +49,13 @@ float motionNoiseThreshold = 0;
 float hall1NoiseThreshold = 0;
 float hall2NoiseThreshold = 0;
 float rotationNoiseThreshold = 0;
+const float MIN_MOTION_THRESHOLD = 1.0f;
+const float MIN_ROTATION_THRESHOLD = 1.0f;
+const float MIN_HALL_THRESHOLD = 300.0f;
 
 //Gesture start detection
+const int START_CONFIRMATION_COUNT = 3;
+int startConfirmationCount = 0;
 float motionWindow[MOTION_WINDOW_SIZE] = {0};
 float hall1Window[HALL_HISTORY_SIZE] = {0};
 float hall2Window[HALL_HISTORY_SIZE] = {0};
@@ -176,7 +181,9 @@ void removeGravity(const Sample &sample,
 }
 
 // Calculate the threshold for a noise. Threshold = 4 * standard deviation.
-void calculateCalibrationThreshold(const float *values, size_t count, float *threshold) {
+void calculateCalibrationThreshold(const float *values, size_t count,
+                                   float *threshold, String sensorType,
+                                   float minimumThreshold = 0.0f) {
     float mean = 0;
     float standardDeviation = 0;
 
@@ -189,7 +196,12 @@ void calculateCalibrationThreshold(const float *values, size_t count, float *thr
     mean = sum / count;
     float variance = (sumSquares / count) - (mean * mean);
     standardDeviation = sqrtf(fmaxf(variance, 0.0f));
-    *threshold = mean + (4.0f * standardDeviation);
+    if (sensorType == "Hall") {
+        *threshold = 4.0f * standardDeviation;
+    } else {
+        *threshold = mean + (4.0f * standardDeviation);
+    }
+    *threshold = fmaxf(*threshold, minimumThreshold);
 }
 
 // Returns true if the mean of the IMU values in the window exceeds its threshold.
@@ -208,7 +220,6 @@ bool isNoiseThresholdExceededIMU(float value, float *window, size_t *windowCount
     for (size_t i = 0; i < MOTION_WINDOW_SIZE; ++i) {
         sum += window[i];
     }
-
     return (sum / MOTION_WINDOW_SIZE) > noiseThreshold;
 }
 
@@ -259,7 +270,7 @@ bool isNoiseThresholdExceededHall(int value, float *window, size_t *windowCount,
     return fabsf(currentWindowMean - previousWindowMean) > noiseThreshold;
 }
 
-bool gestureDetect(Sample &sample) {
+bool gestureDetect(Sample &sample, bool &imuMoving, bool &hallMoving) {
     float motion = sqrtf(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az);
     float rotation = sqrtf(sample.gx * sample.gx + sample.gy * sample.gy + sample.gz * sample.gz);
 
@@ -279,8 +290,9 @@ bool gestureDetect(Sample &sample) {
         rotation, rotationWindow, &rotationWindowCount, &rotationWindowIndex,
         rotationNoiseThreshold);
 
-    bool moving = motionWindowExceededNoise || hall1WindowExceededNoise ||
-    hall2WindowExceededNoise || rotationWindowExceededNoise;
+    imuMoving = motionWindowExceededNoise || rotationWindowExceededNoise;
+    hallMoving = hall1WindowExceededNoise || hall2WindowExceededNoise;
+    bool moving = imuMoving || hallMoving;
 
     #if DEBUG
     if (!gestureActive && moving) {
@@ -315,38 +327,59 @@ void processSample(Sample &sample) {
     getOrientation(sample);
     removeGravity(sample, sample.ax, sample.ay, sample.az);
 
-    //Determine Start of Gesture
-    bool moving = gestureDetect(sample);
     const GesturePose pose = {
         filter.getRollRadians(), filter.getPitchRadians()
     };
     
+    bool imuMoving = false;
+    bool hallMoving = false;
+    bool moving = gestureDetect(sample, imuMoving, hallMoving);
 
-    if (!gestureActive && moving) {
-        gestureActive = true;
-        sampleCount = 0;
-        lastMotionTime = sample.time;
-        appendBufferedGestureSamples();
+    if (!gestureActive) {
 
-        Serial.println("Gesture started");
+        //Determine Start of Gesture
+        if (hallMoving) {
+            // A Hall result already represents a comparison of two windows.
+            startConfirmationCount = START_CONFIRMATION_COUNT;
+        } else if (imuMoving) {
+            if (startConfirmationCount < START_CONFIRMATION_COUNT) {
+                ++startConfirmationCount;
+            }
+        } else {
+            startConfirmationCount = 0;
+        }
 
+        if (startConfirmationCount >= START_CONFIRMATION_COUNT) {
+            gestureActive = true;
+            startConfirmationCount = 0;
+            sampleCount = 0;
+            lastMotionTime = sample.time;
+            appendBufferedGestureSamples();
+
+            Serial.println("Gesture started");
+        } else {
+            //Buffer pre-gesture samples if no gesture is active and no motion is detected
+            bufferPreGestureSample(sample, pose);
+
+            return;
+        }
+    }
+    
+    if (gestureActive) {
+        appendGestureSample(sample, pose);
+
+        if (moving) {
+            lastMotionTime = sample.time;
+        }
+
+        if (sample.time - lastMotionTime >= QUIET_TIME_US ||
+            sample.time - gestureSamples[0].time >= MAX_GESTURE_US || sampleCount >= MAX_SAMPLES) {
+            Serial.println("Gesture finished");
+            finishGesture();
+        }
     }
 
-    //Buffer pre-gesture samples if no gesture is active and no motion is detected
-    if (!gestureActive && !moving) {
-        bufferPreGestureSample(sample, pose);
-        return;
-    }
 
-    appendGestureSample(sample, pose);
-
-    if (moving) lastMotionTime = sample.time;
-
-    if (sample.time - lastMotionTime >= QUIET_TIME_US ||
-        sample.time - gestureSamples[0].time >= MAX_GESTURE_US || sampleCount >= MAX_SAMPLES) {
-        Serial.println("Gesture finished");
-        finishGesture();
-    }
 }
 
 float hallChange(int value, float baseline) {
@@ -412,7 +445,7 @@ void classifyGesture() {
         const float worldZ = -sinPitch * sample.ax
                     + cosPitch * sinRoll * sample.ay
                     + cosPitch * cosRoll * sample.az;
-        const float horizontalAcceleration = worldY;
+        const float horizontalAcceleration = worldX;
         const float verticalAcceleration = worldZ;
 
         const float bend1 = hallChange(sample.hall1, hallBaseline1);
@@ -571,12 +604,12 @@ void classifyGesture() {
     if (rotationEnergy > 4.0f ) {
         Serial.println("rotation");
         return;
-    } else if (horizontalEnergy > 1.0f || verticalEnergy > 1.0f) {
+    } else if ((horizontalEnergy > 1.0f && verticalEnergy < 1.0f) || (verticalEnergy > 1.0f && horizontalEnergy < 1.0f)) {
         if (horizontalEnergy > verticalEnergy) {
             if (minHorizontalTime < maxHorizontalTime) {
-                Serial.println("swipe right");
-            } else {
                 Serial.println("swipe left");
+            } else {
+                Serial.println("swipe right");
             }
         } else {
             if (minVerticalTime < maxVerticalTime) {
@@ -586,6 +619,7 @@ void classifyGesture() {
             }
         }
     } else {
+        //pass to ML model for classification
         Serial.println("no gesture detected");
     }
 }
@@ -753,15 +787,17 @@ void setup() {
 
     //calculate noise threshold
     calculateCalibrationThreshold(calibrationMotion, CALIBRATION_SAMPLES,
-                                &motionNoiseThreshold);
+                                &motionNoiseThreshold, "IMU",
+                                MIN_MOTION_THRESHOLD);
     calculateCalibrationThreshold(calibrationRotation, CALIBRATION_SAMPLES,
-                                &rotationNoiseThreshold);
+                                &rotationNoiseThreshold, "IMU",
+                                MIN_ROTATION_THRESHOLD);
     calculateCalibrationThreshold(calibrationHall1, CALIBRATION_SAMPLES,
-                                &hall1NoiseThreshold);
+                                &hall1NoiseThreshold, "Hall",
+                                MIN_HALL_THRESHOLD);
     calculateCalibrationThreshold(calibrationHall2, CALIBRATION_SAMPLES,
-                                &hall2NoiseThreshold);
-    hall1NoiseThreshold -= hallBaseline1;
-    hall2NoiseThreshold -= hallBaseline2;
+                                &hall2NoiseThreshold, "Hall",
+                                MIN_HALL_THRESHOLD);
 
     Serial.println("Calibration complete. Thresholds (mean + 4*sd, Hall thresholds are change thresholds):");
     Serial.print(" Motion threshold=");

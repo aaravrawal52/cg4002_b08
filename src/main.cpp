@@ -99,6 +99,15 @@ GesturePose gesturePosesBuffer[MOTION_WINDOW_SIZE];
 size_t gestureSampleBufferCount = 0;
 size_t gestureSampleBufferIndex = 0;
 
+//Transfer packet
+Packet gesturePacket[MAX_SAMPLES];
+struct Packet {
+    unsigned long time;
+    float worldX, worldY, worldZ;
+    float gx, gy, gz;
+    int hall1, hall2;
+};
+
 void classifyGesture();
 void processSample(const Sample &sample);
 void finishGesture();
@@ -528,7 +537,18 @@ void classifyGesture() {
             minVerticalTime = sample.time;
             minVerticalAcceleration = verticalAcceleration;
         }
-        
+
+        //populate gesturePacket with the sample data and pose for transmission to the ML model
+        gesturePacket[i].time = sample.time;
+        gesturePacket[i].worldX = worldX;
+        gesturePacket[i].worldY = worldY;
+        gesturePacket[i].worldZ = worldZ;
+        gesturePacket[i].gx = sample.gx;
+        gesturePacket[i].gy = sample.gy;
+        gesturePacket[i].gz = sample.gz;
+        gesturePacket[i].hall1 = sample.hall1;
+        gesturePacket[i].hall2 = sample.hall2;
+
     }
 
 #if DEBUG
@@ -620,6 +640,7 @@ void classifyGesture() {
         }
     } else {
         //pass to ML model for classification
+        //transmit(worldX, worldY, worldZ, hall1, hall2, GesturePose);
         Serial.println("no gesture detected");
     }
 }

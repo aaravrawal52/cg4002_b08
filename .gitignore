@@ -12,3 +12,4 @@ best_params.json
 /deploy/sensor_stream_raw.csv
 
 /indiv_subcomponent_submissions
+/dpu_ip

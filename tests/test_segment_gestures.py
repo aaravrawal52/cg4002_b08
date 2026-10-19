@@ -11,7 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from data_ingestion import segment_gestures, stream_rows
+from data_ingestion import (
+    SENSOR_FIELDS,
+    format_sensor_message,
+    parse_sensor_message,
+    segment_gestures,
+    stream_rows,
+)
 
 TAGGED_DIR = ROOT / "dummy_dataset_tagged"
 PRE_BUFFER = 25
@@ -19,26 +25,26 @@ MAX_SEGMENT = 250
 
 
 def idx_range(segment):
-    """(first sample_idx, last sample_idx) of a segment."""
-    return int(segment[0]["sample_idx"]), int(segment[-1]["sample_idx"])
+    """(first sequence, last sequence) of a segment."""
+    return int(segment[0]["sequence"]), int(segment[-1]["sequence"])
 
 
 def run(rows):
-    """List of (first, last) sample_idx for every segment yielded."""
+    """List of (first, last) sequence for every segment yielded."""
     return [idx_range(s) for s in segment_gestures(rows)]
 
 
 def make_rows(spec):
-    """spec: list of (tag, count) -> row dicts with consecutive sample_idx."""
+    """spec: list of (tag, count) -> row dicts with consecutive sequence."""
     rows = []
     for tag, count in spec:
         for _ in range(count):
-            rows.append({"sample_idx": str(len(rows)), "tag": tag})
+            rows.append({"sequence": str(len(rows)), "tag": tag})
     return rows
 
 
 def expected_segments(labels_path):
-    """(first, last) sample_idx of the segment each unclassified gesture should produce."""
+    """(first, last) sequence of the segment each unclassified gesture should produce."""
     with open(labels_path, newline="") as f:
         labels = list(csv.DictReader(f))
 
@@ -59,7 +65,7 @@ def expected_segments(labels_path):
 # --- Tagged dataset files ---
 
 def test_unittest_file():
-    # 3 IDLE, 2 ACTIVE, 1 UNCLASSIFIED -> one segment covering sample_idx 0-5
+    # 3 IDLE, 2 ACTIVE, 1 UNCLASSIFIED -> one segment covering sequence 0-5
     got = run(stream_rows(TAGGED_DIR / "unittest_raw.csv", realtime=False))
     assert got == [(0, 5)], f"got {got}"
 
@@ -129,6 +135,42 @@ def test_no_segment_exceeds_max_length():
 def test_all_full():
     got = run(make_rows([("IDLE", 25), ("ACTIVE", 225), ("UNCLASSIFIED", 1)]))
     assert got == [], f"got {got}"
+
+
+# --- Comms packet format ---
+
+def test_csv_header_matches_comms_fields():
+    with open(TAGGED_DIR / "unittest_raw.csv", newline="") as f:
+        header = next(csv.reader(f))
+    assert header == SENSOR_FIELDS, f"got {header}"
+
+
+def test_parse_sensor_message():
+    row = parse_sensor_message("SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,ACTIVE\n")
+    assert row["sequence"] == "42" and row["hall2"] == "2110" and row["tag"] == "ACTIVE", f"got {row}"
+
+
+def test_parse_rejects_bad_packets():
+    bad = [
+        "SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110",             # no tag (current comms format)
+        "SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,MOVING",      # unknown tag
+        "DATA,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,IDLE",          # wrong packet type
+    ]
+    for message in bad:
+        try:
+            parse_sensor_message(message)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {message!r}")
+
+
+def test_csv_replayed_as_packets_gives_same_segments():
+    # Simulates the live path: every CSV row sent as a comms packet, then parsed on the Ultra96
+    session_dir = sorted((TAGGED_DIR / "sessions").iterdir())[0]
+    csv_rows = list(stream_rows(session_dir / "sensor_stream_raw.csv", realtime=False))
+    packet_rows = [parse_sensor_message(format_sensor_message(r)) for r in csv_rows]
+    assert packet_rows == csv_rows
+    assert run(packet_rows) == run(csv_rows)
 
 if __name__ == "__main__":
     tests = [(name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn)]

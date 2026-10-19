@@ -6,7 +6,7 @@ import pandas as pd
 
 from data_ingestion import segment_windows, stream_rows
 
-CSV_PATH = Path(__file__).parent / "dummy_dataset" / "sensor_stream_raw.csv"
+CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 
 def list_sessions(sessions_dir):
     sessions_dir = Path(sessions_dir)
@@ -43,7 +43,7 @@ def label_window(window, df_label, window_size):
     - most_likely_class: the class assigned to the window
     """
     class_counter = [0] * len(action_map)
-    window_start_idx = int(window[0]["sample_idx"])
+    window_start_idx = int(window[0]["sequence"])
     window_end_idx = window_start_idx + window_size
     overlap = df_label[
         (df_label["start_idx"] < window_end_idx) & (df_label["end_idx"] > window_start_idx)
@@ -102,13 +102,13 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     return X, y
 
 if __name__ == "__main__":
-    SESSIONS_DIR = 'dummy_dataset/sessions'
-    label_map = 'dummy_dataset/label_map.json'
+    SESSIONS_DIR = 'dummy_dataset_tagged/sessions'
+    label_map = 'dummy_dataset_tagged/label_map.json'
     window_size = 50
     TRAIN_SESSIONS = 2
     VAL_SESSIONS = 1
     TEST_SESSIONS = 1
-    COLUMNS = ["hall_thumb", "hall_index", "hall_middle", "hall_ring", "hall_pinky", "accel_x", "accel_y", "gyro_z"]
+    COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 
     with open(label_map, "r") as file:
         action_map = json.load(file)

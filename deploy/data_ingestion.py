@@ -2,7 +2,7 @@ import csv
 from pathlib import Path
 import time
 
-CSV_PATH = Path(__file__).parent / "dummy_dataset" / "sensor_stream_raw.csv"
+CSV_PATH = Path(__file__).parent / "sensor_stream_raw.csv"
 
 class CircularBuffer:
     def __init__(self, size):
@@ -26,7 +26,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
     simulating the live inference path.
     
     args:
-    - realtime=True: paced to match the t_ms intervals recorded in the file
+    - realtime=True: paced to match the timestamp (ms) intervals recorded in the file
     """
 
     with open(csv_path, newline="") as file_obj:
@@ -39,7 +39,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
         start_wall = None
         start_t_ms = None
         for row in reader:
-            t_ms = float(row["t_ms"])
+            t_ms = float(row["timestamp"])
 
             if start_wall is None:
                 start_wall = time.monotonic()
@@ -73,7 +73,7 @@ def segment_windows(data_path, window_size, realtime=True):
             yield cb.get()
 
 if __name__ == "__main__":
-    data_path = 'dummy_dataset/unittest_raw.csv'
+    data_path = 'sensor_stream_raw.csv'
     window_size = 50
     for window in segment_windows(data_path, window_size):
         print(window)

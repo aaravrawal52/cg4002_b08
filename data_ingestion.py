@@ -3,7 +3,13 @@ from pathlib import Path
 import time
 from enum import Enum
 
-CSV_PATH = Path(__file__).parent / "dummy_dataset" / "sensor_stream_raw.csv"
+CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
+
+# Fields of a comms SENSOR packet after the "SENSOR" prefix, plus the FireBeetle tag:
+#   SENSOR,sequence,timestamp,ax,ay,az,gx,gy,gz,hall1,hall2,tag
+# The dummy CSVs use the same names in the same order.
+SENSOR_FIELDS = ["sequence", "timestamp", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
+TAGS = {"IDLE", "ACTIVE", "UNCLASSIFIED"}
 
 class States(Enum):
     WAITING = "waiting"
@@ -32,12 +38,28 @@ class CircularBuffer:
         self.start = 0
         self.count = 0
 
+def parse_sensor_message(message):
+    """Turn one comms line 'SENSOR,sequence,...,tag' into a row dict, keyed like the CSV rows."""
+    parts = message.strip().split(",")
+    if parts[0] != "SENSOR":
+        raise ValueError(f"Unknown packet type: {parts[0]}")
+    if len(parts) != len(SENSOR_FIELDS) + 1:
+        raise ValueError(f"Expected {len(SENSOR_FIELDS) + 1} fields, got {len(parts)}")
+    row = dict(zip(SENSOR_FIELDS, parts[1:]))
+    if row["tag"] not in TAGS:
+        raise ValueError(f"Unknown tag: {row['tag']}")
+    return row
+
+def format_sensor_message(row):
+    """Inverse of parse_sensor_message, e.g. to replay a CSV as comms packets."""
+    return "SENSOR," + ",".join(str(row[f]) for f in SENSOR_FIELDS) + "\n"
+
 def stream_rows(csv_path=CSV_PATH, realtime=True):
     """Yield rows from the raw sensor CSV for
     simulating the live inference path.
-    
+
     args:
-    - realtime=True: paced to match the t_ms intervals recorded in the file
+    - realtime=True: paced to match the timestamp (ms) intervals recorded in the file
     """
 
     with open(csv_path, newline="") as file_obj:
@@ -50,7 +72,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
         start_wall = None
         start_t_ms = None
         for row in reader:
-            t_ms = float(row["t_ms"])
+            t_ms = float(row["timestamp"])
 
             if start_wall is None:
                 start_wall = time.monotonic()

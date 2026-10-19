@@ -4,8 +4,7 @@ from pynq_dpu import DpuOverlay
 from data_ingestion import segment_windows
 import time
 
-COLUMNS = ["hall_thumb", "hall_index", "hall_middle", "hall_ring",
-           "hall_pinky", "accel_x", "accel_y", "gyro_z"]
+COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 WINDOW_SIZE = 50
 
 def load_zscore_stats(path):

@@ -1,8 +1,14 @@
 import csv
 from pathlib import Path
 import time
+from enum import Enum
 
 CSV_PATH = Path(__file__).parent / "dummy_dataset" / "sensor_stream_raw.csv"
+
+class States(Enum):
+    WAITING = "waiting"
+    COLLECTING = "collecting"
+    DISCARDING = "discarding"
 
 class CircularBuffer:
     def __init__(self, size):
@@ -20,6 +26,11 @@ class CircularBuffer:
 
     def get(self):
         return [self.buffer[(self.start + i) % self.size] for i in range(self.count)]
+    
+    def clear(self):
+        self.buffer = [None] * self.size
+        self.start = 0
+        self.count = 0
 
 def stream_rows(csv_path=CSV_PATH, realtime=True):
     """Yield rows from the raw sensor CSV for
@@ -72,8 +83,44 @@ def segment_windows(data_path, window_size, realtime=True):
             since_last_window = 0
             yield cb.get()
 
+def segment_gestures(rows):
+    '''Acts as state machine'''
+    MAX_SEGMENT = 250 # includes UNCLASSIFIED row
+    PRE_BUFFER = 25
+    cb = CircularBuffer(PRE_BUFFER)
+    active_buffer = []
+    state = States.WAITING
+
+    for row in rows:
+        if row["tag"] == "IDLE":
+            if state == States.COLLECTING: # firebeetle classified
+                cb.clear()
+                active_buffer = []
+            cb.append(row)
+            state = States.WAITING
+        elif row["tag"] == "ACTIVE":
+            if state == States.DISCARDING:
+                continue
+            if state == States.WAITING:
+                active_buffer = cb.get()
+                cb.clear()
+            state = States.COLLECTING
+            active_buffer.append(row)
+            if len(active_buffer) >= MAX_SEGMENT:
+                # discard
+                state = States.DISCARDING
+                active_buffer = []
+        elif row["tag"] == "UNCLASSIFIED":
+            if state == States.COLLECTING:
+                active_buffer.append(row)
+                yield active_buffer
+            state = States.WAITING
+            active_buffer = []
+
+
+
 if __name__ == "__main__":
-    data_path = 'dummy_dataset/unittest_raw.csv'
+    data_path = 'dummy_dataset_tagged/unittest_raw.csv'
     window_size = 50
     for window in segment_windows(data_path, window_size):
         print(window)

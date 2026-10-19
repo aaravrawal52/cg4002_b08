@@ -5,6 +5,7 @@ __pycache__/
 .venv
 
 dummy_dataset/
+dummy_dataset_tagged/
 preprocessed_data/
 models/
 optuna.db

@@ -1,8 +1,20 @@
 import csv
 from pathlib import Path
 import time
+from enum import Enum
 
-CSV_PATH = Path(__file__).parent / "sensor_stream_raw.csv"
+CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
+
+# Fields of a comms SENSOR packet after the "SENSOR" prefix, plus the FireBeetle tag:
+#   SENSOR,sequence,timestamp,ax,ay,az,gx,gy,gz,hall1,hall2,tag
+# The dummy CSVs use the same names in the same order.
+SENSOR_FIELDS = ["sequence", "timestamp", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
+TAGS = {"IDLE", "ACTIVE", "UNCLASSIFIED"}
+
+class States(Enum):
+    WAITING = "waiting"
+    COLLECTING = "collecting"
+    DISCARDING = "discarding"
 
 class CircularBuffer:
     def __init__(self, size):
@@ -20,11 +32,32 @@ class CircularBuffer:
 
     def get(self):
         return [self.buffer[(self.start + i) % self.size] for i in range(self.count)]
+    
+    def clear(self):
+        self.buffer = [None] * self.size
+        self.start = 0
+        self.count = 0
+
+def parse_sensor_message(message):
+    """Turn one comms line 'SENSOR,sequence,...,tag' into a row dict, keyed like the CSV rows."""
+    parts = message.strip().split(",")
+    if parts[0] != "SENSOR":
+        raise ValueError(f"Unknown packet type: {parts[0]}")
+    if len(parts) != len(SENSOR_FIELDS) + 1:
+        raise ValueError(f"Expected {len(SENSOR_FIELDS) + 1} fields, got {len(parts)}")
+    row = dict(zip(SENSOR_FIELDS, parts[1:]))
+    if row["tag"] not in TAGS:
+        raise ValueError(f"Unknown tag: {row['tag']}")
+    return row
+
+def format_sensor_message(row):
+    """Inverse of parse_sensor_message, e.g. to replay a CSV as comms packets."""
+    return "SENSOR," + ",".join(str(row[f]) for f in SENSOR_FIELDS) + "\n"
 
 def stream_rows(csv_path=CSV_PATH, realtime=True):
     """Yield rows from the raw sensor CSV for
     simulating the live inference path.
-    
+
     args:
     - realtime=True: paced to match the timestamp (ms) intervals recorded in the file
     """
@@ -72,8 +105,44 @@ def segment_windows(data_path, window_size, realtime=True):
             since_last_window = 0
             yield cb.get()
 
+def segment_gestures(rows):
+    '''Acts as state machine'''
+    MAX_SEGMENT = 250 # includes UNCLASSIFIED row
+    PRE_BUFFER = 25
+    cb = CircularBuffer(PRE_BUFFER)
+    active_buffer = []
+    state = States.WAITING
+
+    for row in rows:
+        if row["tag"] == "IDLE":
+            if state == States.COLLECTING: # firebeetle classified
+                cb.clear()
+                active_buffer = []
+            cb.append(row)
+            state = States.WAITING
+        elif row["tag"] == "ACTIVE":
+            if state == States.DISCARDING:
+                continue
+            if state == States.WAITING:
+                active_buffer = cb.get()
+                cb.clear()
+            state = States.COLLECTING
+            active_buffer.append(row)
+            if len(active_buffer) >= MAX_SEGMENT:
+                # discard
+                state = States.DISCARDING
+                active_buffer = []
+        elif row["tag"] == "UNCLASSIFIED":
+            if state == States.COLLECTING:
+                active_buffer.append(row)
+                yield active_buffer
+            state = States.WAITING
+            active_buffer = []
+
+
+
 if __name__ == "__main__":
-    data_path = 'sensor_stream_raw.csv'
+    data_path = 'dummy_dataset_tagged/unittest_raw.csv'
     window_size = 50
     for window in segment_windows(data_path, window_size):
         print(window)

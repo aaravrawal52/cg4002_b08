@@ -9,11 +9,15 @@ from torch.utils.data import DataLoader
 
 from model import build_model
 
+LABEL_MAP_PATH = "dummy_dataset_tagged/label_map.json"
+
 def define_model(trial):
     n_conv_layers = trial.suggest_int("n_conv_layers", 1, 3)
     channels = [trial.suggest_int("out_channels_l{}".format(i), 8, 64) for i in range(n_conv_layers)]
     kernels = [trial.suggest_categorical(f"kernel_size_l{i}", [3, 5, 7]) for i in range(n_conv_layers)]
-    return build_model(channels, kernels)
+    with open(LABEL_MAP_PATH) as f:
+        num_classes = len(json.load(f))
+    return build_model(channels, kernels, num_classes)
 
 def objective(trial, X_train, y_train, X_val, y_val):
     """

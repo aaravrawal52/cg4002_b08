@@ -71,7 +71,10 @@ def quantization():
     with open(model_dir/'best_params.json', "r") as file:
         best_params = json.load(file)
     
-    model = build_model(best_params["channels"], best_params["kernels"])
+    with open(model_dir/'label_map.json', "r") as file:
+        num_classes = len(json.load(file))
+
+    model = build_model(best_params["channels"], best_params["kernels"], num_classes)
     model.load_state_dict(torch.load(model_dir/'model.pt'))
 
     batch_size = 5

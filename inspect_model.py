@@ -7,7 +7,10 @@ from model import build_model
 with open("run/best_params.json") as f:
     params = json.load(f)
 
-model = build_model(params["channels"], params["kernels"])
+with open("run/label_map.json") as f:
+    num_classes = len(json.load(f))
+
+model = build_model(params["channels"], params["kernels"], num_classes)
 model.load_state_dict(torch.load("run/model.pt", map_location="cpu"))
 model.eval()
 

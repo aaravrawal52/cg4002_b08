@@ -4,7 +4,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data_ingestion import segment_windows, stream_rows
+from data_ingestion import segment_gestures, stream_rows
+from deploy.resample import resample_segment
 
 CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 
@@ -31,20 +32,23 @@ def apply_zscore_normalization(df, COLUMNS):
         stats = json.load(json_file)
     return stats
 
-def label_window(window, df_label, window_size):
+def label_window(window, df_label):
     """ This function assignes a class to a window, based on the percentage an action takes up in the window.
+    The window can be any length (e.g. a gesture segment). Leading IDLE rows (the pre-buffer) are not counted.
 
     args:
     - window
     - df_label: dataframe containing the labelled gesture class corresponding to the respective indexes from raw data
-    - window_size
 
     returns:
     - most_likely_class: the class assigned to the window
     """
     class_counter = [0] * len(action_map)
-    window_start_idx = int(window[0]["sequence"])
-    window_end_idx = window_start_idx + window_size
+    # Skip the pre-buffer: start counting at the first non-IDLE row (or the first row if there is none)
+    first_active = next((i for i, row in enumerate(window) if row["tag"] != "IDLE"), 0)
+    window_start_idx = int(window[first_active]["sequence"])
+    window_end_idx = int(window[-1]["sequence"]) + 1
+    length = window_end_idx - window_start_idx
     overlap = df_label[
         (df_label["start_idx"] < window_end_idx) & (df_label["end_idx"] > window_start_idx)
     ]
@@ -52,7 +56,7 @@ def label_window(window, df_label, window_size):
     for index, row in overlap.iterrows():
         lo = max(row["start_idx"], window_start_idx)
         hi = min(row["end_idx"], window_end_idx)
-        percentage_overlap = (hi - lo) / window_size * 100
+        percentage_overlap = (hi - lo) / length * 100
 
         class_counter[row["action_class"]] += percentage_overlap
     
@@ -70,6 +74,7 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     - X: list of windows
     - y: list of action class for each window
     """
+    TARGET_LEN = 50
     X = []
     y = []
     for session in sessions:
@@ -79,22 +84,25 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
         instance_raw = session/'sensor_stream_raw.csv'
         df = pd.read_csv(instance_raw)
         df_label = pd.read_csv(instance_label)
-        df_label["action_class"] = df_label["gesture"].map(action_map).fillna(0).astype(int)
+        # Only gestures in the label map count; idle stretches must not fall back to class 0
+        df_label = df_label[df_label["gesture"].isin(action_map)].copy()
+        df_label["action_class"] = df_label["gesture"].map(action_map).astype(int)
 
 
         stats = apply_zscore_normalization(df, COLUMNS)
         print("applied zscore")
 
-        for window in segment_windows(instance_raw, window_size, realtime=False):
-            label = label_window(window, df_label, window_size)
+        for segment in segment_gestures(stream_rows(instance_raw, realtime=False)):
+            label = label_window(segment, df_label)
             if label is None:
                 continue
             window_values = []
-            for row in window:
+            for row in segment:
                 row_values =[]
                 for c in COLUMNS:
                     row_values.append((float(row[c]) - stats[c]["mean"]) / stats[c]["std_dev"])
                 window_values.append(row_values)
+            window_values = resample_segment(window_values, TARGET_LEN)
             X.append(window_values)
             y.append(label)
     X = np.array(X)

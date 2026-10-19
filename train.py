@@ -10,10 +10,14 @@ from torch.utils.data import DataLoader
 
 from model import build_model
 
+LABEL_MAP_PATH = "dummy_dataset_tagged/label_map.json"
+
 def define_model(stats):
     channels = stats["channels"]
     kernels = stats["kernels"]
-    return build_model(channels, kernels)
+    with open(LABEL_MAP_PATH) as f:
+        num_classes = len(json.load(f))
+    return build_model(channels, kernels, num_classes)
 
 def train_model(X, y):
     """
@@ -83,3 +87,5 @@ if __name__ == "__main__":
     with open(run_dir / "best_params.json", "w") as f:
         json.dump(stats, f)
     shutil.copy("zscore_stats.json", run_dir / "zscore_stats.json")
+    # test/quantize/inspect read the class count from here, so it always matches these weights
+    shutil.copy(LABEL_MAP_PATH, run_dir / "label_map.json")

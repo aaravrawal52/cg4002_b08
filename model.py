@@ -1,6 +1,6 @@
 from torch import nn
 
-def build_model(channels, kernels):
+def build_model(channels, kernels, num_classes):
     layers = []
     in_channels = 8
     for out_channels, kernel_size in zip(channels, kernels):
@@ -10,5 +10,5 @@ def build_model(channels, kernels):
         in_channels = out_channels
     layers.append(nn.AdaptiveAvgPool2d((1,1)))
     layers.append(nn.Flatten())
-    layers.append(nn.Linear(in_channels, 8))
+    layers.append(nn.Linear(in_channels, num_classes))
     return nn.Sequential(*layers)

@@ -22,7 +22,10 @@ def evaluate(run_dir):
     with open(run_dir / "best_params.json") as f:
         cfg = json.load(f)
 
-    model = build_model(cfg["channels"], cfg["kernels"])
+    with open(run_dir / "label_map.json") as f:
+        num_classes = len(json.load(f))
+
+    model = build_model(cfg["channels"], cfg["kernels"], num_classes)
     model.load_state_dict(torch.load(run_dir / "model.pt", map_location="cpu"))
     model.eval()
 

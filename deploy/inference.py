@@ -1,11 +1,12 @@
 import json
 import numpy as np
 from pynq_dpu import DpuOverlay
-from data_ingestion import segment_windows
+from data_ingestion import segment_windows, segment_gestures, stream_rows
+from resample import resample_segment
 import time
 
 COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
-WINDOW_SIZE = 50
+TARGET_LEN = 50
 
 def load_zscore_stats(path):
     with open(path) as f:
@@ -18,7 +19,7 @@ def load_idx_to_gesture(path):
     return {v: k for k, v in action_map.items()}
 
 def normalize_window(window, stats, columns):
-    """window: list of dict-like rows from segment_windows. Returns (50, 8) float32."""
+    """window: list of dict-like rows from segment_windows. Returns (n, 8) float32."""
     arr = np.array([[float(row[c]) for c in columns] for row in window], dtype=np.float32)
     for i, c in enumerate(columns):
         arr[:, i] = (arr[:, i] - stats[c]["mean"]) / stats[c]["std_dev"]
@@ -50,9 +51,10 @@ def main():
     input_data = [np.empty(input_shape, dtype=np.int8)]
     output_data = [np.empty(output_shape, dtype=np.int8)]
 
-    for window in segment_windows("sensor_stream_raw.csv", WINDOW_SIZE):
-        norm = normalize_window(window, zscore_stats, COLUMNS)
-        quantized = np.clip(np.round(norm * input_scale), -128, 127).astype(np.int8)
+    for segment in segment_gestures(stream_rows("sensor_stream_raw.csv", realtime=False)):
+        norm = normalize_window(segment, zscore_stats, COLUMNS)
+        norm_resampled = resample_segment(norm, TARGET_LEN)
+        quantized = np.clip(np.round(norm_resampled * input_scale), -128, 127).astype(np.int8)
         input_data[0][0] = quantized.reshape(input_shape[1:])
 
         t0 = time.perf_counter()

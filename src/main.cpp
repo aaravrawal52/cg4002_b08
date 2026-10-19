@@ -8,12 +8,12 @@
 #define DEBUG 1
 
 // Define I2C pins
-#define SDA_PIN 41  // GPIO41
-#define SCL_PIN 42  // GPIO42
+#define SDA_PIN 21  // GPIO21
+#define SCL_PIN 22  // GPIO22
 
 // Hall sensors are assumed to be connected to ADC1_0 and ADC1_1.
-#define HALL_SENSOR_PIN 1  // ADC1_0 (GPIO1)
-#define HALL_SENSOR_PIN_2 2  // ADC1_1 (GPIO2)
+#define HALL_SENSOR_PIN 36  // ADC1_0 (GPIO36)
+#define HALL_SENSOR_PIN_2 39  // ADC1_1 (GPIO39)
 
 // Create MPU6050 sensor object
 Adafruit_MPU6050 mpu;
@@ -100,13 +100,13 @@ size_t gestureSampleBufferCount = 0;
 size_t gestureSampleBufferIndex = 0;
 
 //Transfer packet
-Packet gesturePacket[MAX_SAMPLES];
 struct Packet {
     unsigned long time;
     float worldX, worldY, worldZ;
     float gx, gy, gz;
     int hall1, hall2;
 };
+Packet gesturePacket[MAX_SAMPLES];
 
 void classifyGesture();
 void processSample(const Sample &sample);
@@ -661,16 +661,16 @@ void setup() {
     // Initialize Serial communication
     Serial.begin(115200);
     delay(1000);
-
+    
     Serial.println("ESP32 MPU-6050 I2C Sensor Reader");
     Serial.println("==================================");
-
+    
     //Initialize Madgwick filter
     filter.begin(100); // 100 Hz sample rate
-
+    
     // Initialize I2C on custom pins (SDA=GPIO41, SCL=GPIO42)
     Wire.begin(SDA_PIN, SCL_PIN);
-
+    
     // Initialize MPU6050
     bool imuConnected = false;
     while (imuConnected == false) {
@@ -683,38 +683,40 @@ void setup() {
         }
     }
 
+    
     // Set accelerometer range
     mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
     Serial.print("Accelerometer range set to: ");
     switch (mpu.getAccelerometerRange()) {
-    case MPU6050_RANGE_2_G:
+        case MPU6050_RANGE_2_G:
         Serial.println("+-2G");
         break;
-    case MPU6050_RANGE_4_G:
+        case MPU6050_RANGE_4_G:
         Serial.println("+-4G");
         break;
-    case MPU6050_RANGE_8_G:
+        case MPU6050_RANGE_8_G:
         Serial.println("+-8G");
         break;
-    case MPU6050_RANGE_16_G:
+        case MPU6050_RANGE_16_G:
         Serial.println("+-16G");
         break;
     }
 
+    
     // Set gyroscope range
     mpu.setGyroRange(MPU6050_RANGE_500_DEG);
     Serial.print("Gyro range set to: ");
     switch (mpu.getGyroRange()) {
-    case MPU6050_RANGE_250_DEG:
+        case MPU6050_RANGE_250_DEG:
         Serial.println("+- 250 deg/s");
         break;
-    case MPU6050_RANGE_500_DEG:
+        case MPU6050_RANGE_500_DEG:
         Serial.println("+- 500 deg/s");
         break;
-    case MPU6050_RANGE_1000_DEG:
+        case MPU6050_RANGE_1000_DEG:
         Serial.println("+- 1000 deg/s");
         break;
-    case MPU6050_RANGE_2000_DEG:
+        case MPU6050_RANGE_2000_DEG:
         Serial.println("+- 2000 deg/s");
         break;
     }
@@ -723,31 +725,31 @@ void setup() {
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     Serial.print("Filter bandwidth set to: ");
     switch (mpu.getFilterBandwidth()) {
-    case MPU6050_BAND_260_HZ:
+        case MPU6050_BAND_260_HZ:
         Serial.println("260 Hz");
         break;
-    case MPU6050_BAND_184_HZ:
+        case MPU6050_BAND_184_HZ:
         Serial.println("184 Hz");
         break;
-    case MPU6050_BAND_94_HZ:
+        case MPU6050_BAND_94_HZ:
         Serial.println("94 Hz");
         break;
-    case MPU6050_BAND_44_HZ:
+        case MPU6050_BAND_44_HZ:
         Serial.println("44 Hz");
         break;
-    case MPU6050_BAND_21_HZ:
+        case MPU6050_BAND_21_HZ:
         Serial.println("21 Hz");
         break;
-    case MPU6050_BAND_10_HZ:
+        case MPU6050_BAND_10_HZ:
         Serial.println("10 Hz");
         break;
-    case MPU6050_BAND_5_HZ:
+        case MPU6050_BAND_5_HZ:
         Serial.println("5 Hz");
         break;
     }
-
+    
     Serial.println("\nStarting sensor reading...\n");
-
+    
     // Configure Hall sensor ADC
     analogReadResolution(12);           // Set 12-bit resolution (0-4095)
     analogSetAttenuation(ADC_11db);     // Set attenuation to 11dB for 0-3.3V range
@@ -829,6 +831,25 @@ void setup() {
     Serial.println(hall1NoiseThreshold, 3);
     Serial.print(" Hall2 threshold=");
     Serial.println(hall2NoiseThreshold, 3);
+    Serial.println("Baselines:");
+    Serial.print(" Accel baseline: (");
+    Serial.print(accelBaselineX, 3);
+    Serial.print(", ");
+    Serial.print(accelBaselineY, 3);
+    Serial.print(", ");
+    Serial.print(accelBaselineZ, 3);
+    Serial.println(")");
+    Serial.print(" Gyro baseline: (");
+    Serial.print(gyroBaselineX, 3);
+    Serial.print(", ");
+    Serial.print(gyroBaselineY, 3);
+    Serial.print(", ");
+    Serial.print(gyroBaselineZ, 3);
+    Serial.println(")");
+    Serial.print(" Hall1 baseline=");
+    Serial.println(hallBaseline1, 3);
+    Serial.print(" Hall2 baseline=");
+    Serial.println(hallBaseline2, 3);
     Serial.println("Move your hand to produce a gesture.\n");
 }
 
@@ -841,8 +862,8 @@ void loop() {
         sensors_event_t a, g, temp;
         mpu.getEvent(&a, &g, &temp);
         Sample sample = {
-            currentTime, a.acceleration.x, a.acceleration.y, a.acceleration.z,
-            g.gyro.x, g.gyro.y, g.gyro.z,
+            currentTime, a.acceleration.x - accelBaselineX, a.acceleration.y - accelBaselineY, a.acceleration.z - accelBaselineZ,
+            g.gyro.x - gyroBaselineX, g.gyro.y - gyroBaselineY, g.gyro.z - gyroBaselineZ,
             analogRead(HALL_SENSOR_PIN), analogRead(HALL_SENSOR_PIN_2)
          };
         processSample(sample);

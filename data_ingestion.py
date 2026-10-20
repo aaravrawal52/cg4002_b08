@@ -46,8 +46,8 @@ def parse_sensor_message(message):
     if len(parts) != len(SENSOR_FIELDS) + 1:
         raise ValueError(f"Expected {len(SENSOR_FIELDS) + 1} fields, got {len(parts)}")
     row = dict(zip(SENSOR_FIELDS, parts[1:]))
-    if row["tag"] not in TAGS:
-        raise ValueError(f"Unknown tag: {row['tag']}")
+    # if row["tag"] not in TAGS:
+    #     raise ValueError(f"Unknown tag: {row['tag']}")
     return row
 
 def format_sensor_message(row):
@@ -124,7 +124,16 @@ class GestureSegmenter:
                 self.active_buffer = []
             self.cb.append(row)
             self.state = States.WAITING
-        elif row["tag"] == "ACTIVE":
+        
+        elif row["tag"] == "UNCLASSIFIED":
+            segment = None
+            if self.state == States.COLLECTING:
+                self.active_buffer.append(row)
+                segment = self.active_buffer
+            self.state = States.WAITING
+            self.active_buffer = []
+            return segment
+        else:
             if self.state == States.DISCARDING:
                 return None
             if self.state == States.WAITING:
@@ -136,14 +145,6 @@ class GestureSegmenter:
                 # discard
                 self.state = States.DISCARDING
                 self.active_buffer = []
-        elif row["tag"] == "UNCLASSIFIED":
-            segment = None
-            if self.state == States.COLLECTING:
-                self.active_buffer.append(row)
-                segment = self.active_buffer
-            self.state = States.WAITING
-            self.active_buffer = []
-            return segment
         return None
 
 def segment_gestures(rows):

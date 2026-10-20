@@ -1,10 +1,12 @@
 import socket
 import random
-
 import sys
 from pathlib import Path
 
+# Absolute path to the ML deployment directory
 DEPLOY_DIR = Path(__file__).resolve().parents[2] / "deploy"
+
+# Make inference.py and its dependencies importable
 sys.path.insert(0, str(DEPLOY_DIR))
 
 from data_ingestion import (

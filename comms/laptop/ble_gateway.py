@@ -9,7 +9,7 @@ import json
 import websockets
 
 
-DEVICE_NAME = "CG4002_GLOVE"
+DEVICE_NAME = "CG4002_GLOVE_01"
 COMMAND_CHAR_UUID = (
     "12345678-1234-1234-1234-1234567890ad"
 )
@@ -442,9 +442,27 @@ def notification_handler(characteristic, data):
             "utf-8",
             errors="replace"
         )
+        if message.startswith("DATA,"):
+            print(
+                f"[DEBUG DATA] "
+                f"fields={len(message.split(','))} "
+                f"packet={message}"
+            )
 
         # Ignore the periodic FireBeetle DATA stream
         # for this keyboard pipeline test.
+        # ============================================================
+        # CONTINUOUS SENSOR STREAM
+        # ============================================================
+
+        if message.startswith("DATA,"):
+
+            handle_stream_packet(
+                message,
+                len(data)
+            )
+
+            return
         if message.startswith("LOCAL_GESTURE,"):
 
             handle_local_gesture(message)

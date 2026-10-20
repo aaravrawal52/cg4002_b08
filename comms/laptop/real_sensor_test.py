@@ -152,8 +152,10 @@ async def main():
 
             parts = message.split(",")
 
-            if len(parts) != 12:
-                print("[ERROR] Invalid packet")
+            if len(parts) != 13:
+                print(
+                    f"[ERROR] Invalid packet fields={len(parts)}"
+                )
                 return
 
             received += 1
@@ -181,6 +183,11 @@ async def main():
                     f"  hall=({parts[10]}, "
                     f"{parts[11]})"
                 )
+                if parts[12] != "IDLE":
+                    print(
+                        f"[TAG] seq={parts[2]} "
+                        f"tag={parts[12]}"
+                    )
 
         await client.start_notify(
             SENSOR_CHAR_UUID,

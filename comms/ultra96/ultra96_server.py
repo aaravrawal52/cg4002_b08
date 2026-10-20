@@ -1,10 +1,18 @@
 import socket
 import random
 
+import sys
+from pathlib import Path
+
+DEPLOY_DIR = Path(__file__).resolve().parents[2] / "deploy"
+sys.path.insert(0, str(DEPLOY_DIR))
+
 from data_ingestion import (
     parse_sensor_message,
-    GestureSegmenter
+    GestureSegmenter,
 )
+
+from inference import GestureClassifier
 
 HOST = "127.0.0.1"
 PORT = 5001
@@ -64,6 +72,17 @@ device_id = None
 
 expected_sequence = None
 segmenter = GestureSegmenter()
+# ============================================================
+# DPU MODEL INITIALIZATION
+# ============================================================
+
+print("[ML] Loading DPU model...")
+
+classifier = GestureClassifier(
+    deploy_dir=DEPLOY_DIR
+)
+
+print("[ML] DPU model loaded successfully")
 
 packets_received = 0
 packets_missing = 0
@@ -298,6 +317,41 @@ while True:
                     print(
                         "===================================="
                     )
+                    # ============================================================
+# ACTUAL DPU INFERENCE
+# ============================================================
+
+                    try:
+                        gesture, confidence, inference_ms = (
+                            classifier.classify(segment)
+                        )
+
+                        print()
+                        print("========== ML PREDICTION ==========")
+                        print(f"Gesture:       {gesture}")
+                        print(f"Confidence:    {confidence:.4f}")
+                        print(f"DPU time:      {inference_ms:.2f} ms")
+                        print("===================================")
+
+                        # Send the prediction back to the relay Mac.
+                        response = (
+                            f"GESTURE,"
+                            f"{gesture_sequence},"
+                            f"{gesture},"
+                            f"{confidence}\n"
+                        )
+
+                        conn.sendall(response.encode("utf-8"))
+
+                        print(
+                            f"[ML -> MAC] Sent gesture={gesture} "
+                            f"seq={gesture_sequence}"
+                        )
+
+                        gesture_sequence += 1
+
+                    except Exception as error:
+                        print(f"[ML] Inference failed: {error}")
 
                     # Your teammate's actual DPU inference
                     # will be called here later:

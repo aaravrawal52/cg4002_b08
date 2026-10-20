@@ -12,37 +12,6 @@ PORT = 5001
 SUPPORTED_PROTOCOL_VERSION = 1
 
 
-def parse_sensor_message(message):
-    parts = message.split(",")
-
-    if len(parts) != 11:
-        raise ValueError(
-            f"Expected 11 fields, got {len(parts)}"
-        )
-
-    if parts[0] != "SENSOR":
-        raise ValueError(
-            f"Unknown packet type: {parts[0]}"
-        )
-
-    return {
-        "type": parts[0],
-
-        "sequence": int(parts[1]),
-        "timestamp": int(parts[2]),
-
-        "ax": float(parts[3]),
-        "ay": float(parts[4]),
-        "az": float(parts[5]),
-
-        "gx": float(parts[6]),
-        "gy": float(parts[7]),
-        "gz": float(parts[8]),
-
-        "hall1": int(parts[9]),
-        "hall2": int(parts[10]),
-    }
-
 
 def parse_hello_message(message):
     parts = message.split(",")

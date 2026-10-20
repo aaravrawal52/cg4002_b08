@@ -105,39 +105,54 @@ def segment_windows(data_path, window_size, realtime=True):
             since_last_window = 0
             yield cb.get()
 
-def segment_gestures(rows):
-    '''Acts as state machine'''
+class GestureSegmenter:
+    '''Acts as state machine. Push-style: feed one row at a time with add_row().'''
     MAX_SEGMENT = 250 # includes UNCLASSIFIED row
     PRE_BUFFER = 25
-    cb = CircularBuffer(PRE_BUFFER)
-    active_buffer = []
-    state = States.WAITING
 
-    for row in rows:
+    def __init__(self):
+        self.cb = CircularBuffer(self.PRE_BUFFER)
+        self.active_buffer = []
+        self.state = States.WAITING
+
+    def add_row(self, row):
+        """Process one row. Returns the finished segment (list of rows) when an
+        UNCLASSIFIED row completes one, otherwise None."""
         if row["tag"] == "IDLE":
-            if state == States.COLLECTING: # firebeetle classified
-                cb.clear()
-                active_buffer = []
-            cb.append(row)
-            state = States.WAITING
+            if self.state == States.COLLECTING: # firebeetle classified
+                self.cb.clear()
+                self.active_buffer = []
+            self.cb.append(row)
+            self.state = States.WAITING
         elif row["tag"] == "ACTIVE":
-            if state == States.DISCARDING:
-                continue
-            if state == States.WAITING:
-                active_buffer = cb.get()
-                cb.clear()
-            state = States.COLLECTING
-            active_buffer.append(row)
-            if len(active_buffer) >= MAX_SEGMENT:
+            if self.state == States.DISCARDING:
+                return None
+            if self.state == States.WAITING:
+                self.active_buffer = self.cb.get()
+                self.cb.clear()
+            self.state = States.COLLECTING
+            self.active_buffer.append(row)
+            if len(self.active_buffer) >= self.MAX_SEGMENT:
                 # discard
-                state = States.DISCARDING
-                active_buffer = []
+                self.state = States.DISCARDING
+                self.active_buffer = []
         elif row["tag"] == "UNCLASSIFIED":
-            if state == States.COLLECTING:
-                active_buffer.append(row)
-                yield active_buffer
-            state = States.WAITING
-            active_buffer = []
+            segment = None
+            if self.state == States.COLLECTING:
+                self.active_buffer.append(row)
+                segment = self.active_buffer
+            self.state = States.WAITING
+            self.active_buffer = []
+            return segment
+        return None
+
+def segment_gestures(rows):
+    '''Pull-style wrapper around GestureSegmenter: yields every finished segment from an iterable of rows.'''
+    segmenter = GestureSegmenter()
+    for row in rows:
+        segment = segmenter.add_row(row)
+        if segment is not None:
+            yield segment
 
 
 

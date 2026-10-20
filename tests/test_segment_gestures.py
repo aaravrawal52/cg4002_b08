@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from data_ingestion import (
     SENSOR_FIELDS,
+    GestureSegmenter,
     format_sensor_message,
     parse_sensor_message,
     segment_gestures,
@@ -135,6 +136,15 @@ def test_no_segment_exceeds_max_length():
 def test_all_full():
     got = run(make_rows([("IDLE", 25), ("ACTIVE", 225), ("UNCLASSIFIED", 1)]))
     assert got == [], f"got {got}"
+
+
+def test_add_row_push_style():
+    # How the comms server uses it: one row at a time, a segment only on the UNCLASSIFIED row
+    segmenter = GestureSegmenter()
+    rows = make_rows([("IDLE", 30), ("ACTIVE", 40), ("UNCLASSIFIED", 1), ("IDLE", 5)])
+    results = [segmenter.add_row(r) for r in rows]
+    finished = [(i, idx_range(s)) for i, s in enumerate(results) if s is not None]
+    assert finished == [(70, (5, 70))], f"got {finished}"
 
 
 # --- Comms packet format ---

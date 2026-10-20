@@ -6,6 +6,7 @@
 #include <BLE2902.h>
 #include "mbedtls/md5.h"
 #include "SensorManager.h"
+#include "GestureProcessor.h"
 
 
 // ============================================================
@@ -614,7 +615,95 @@ if (command == "FILE_END") {
     );
   }
 };
+// ============================================================
+// GESTURE EVENT TRANSMISSION
+// ============================================================
+//
+// Sends the result of local deterministic classification.
+//
+// LOCAL_GESTURE:
+//   FireBeetle recognized the gesture.
+//
+// ML_REQUEST:
+//   Gesture detected but deterministic classification
+//   could not recognize it.
+//
+// Both messages include:
+//   device ID
+//   event sequence
+//   sensor sequence
+//   gesture type (for LOCAL_GESTURE)
+//   CRC32
+// ============================================================
 
+uint32_t gestureEventSequence = 0;
+
+void sendGestureEvent(
+    const GestureResult &result,
+    uint32_t sensorSequence
+) {
+
+    if (!result.completed) {
+        return;
+    }
+
+    if (!deviceConnected) {
+        Serial.println(
+            "[GESTURE] No BLE client connected"
+        );
+        return;
+    }
+
+    String payload;
+
+    if (result.type == GestureType::UNRECOGNIZED) {
+
+        payload =
+            "ML_REQUEST,"
+            + String(DEVICE_ID)
+            + ","
+            + String(gestureEventSequence)
+            + ","
+            + String(sensorSequence);
+
+    } else {
+
+        payload =
+            "LOCAL_GESTURE,"
+            + String(DEVICE_ID)
+            + ","
+            + String(gestureEventSequence)
+            + ","
+            + String(sensorSequence)
+            + ","
+            + String(gestureTypeName(result.type));
+    }
+
+    uint32_t crc = calculateCRC32(payload);
+
+    char crcBuffer[9];
+
+    snprintf(
+        crcBuffer,
+        sizeof(crcBuffer),
+        "%08lX",
+        (unsigned long)crc
+    );
+
+    String packet =
+        payload + "," + String(crcBuffer);
+
+    sensorCharacteristic->setValue(
+        packet.c_str()
+    );
+
+    sensorCharacteristic->notify();
+
+    Serial.print("[GESTURE TX] ");
+    Serial.println(packet);
+
+    gestureEventSequence++;
+}
 
 // ============================================================
 // SETUP
@@ -650,6 +739,15 @@ void setup() {
     }
 
     Serial.println("[DEBUG] Sensor initialization complete");
+    // ============================================================
+// INITIALIZE DETERMINISTIC GESTURE PROCESSOR
+// ============================================================
+
+  initializeGestureProcessor(70.0f);
+
+  Serial.println();
+  Serial.println("[GESTURE] Keep the glove stationary");
+  Serial.println("[GESTURE] Calibrating for approximately 1 second...");
   if (!initializeSensors()) {
 
     Serial.println(
@@ -818,34 +916,69 @@ void setup() {
 
 void loop() {
 
-    // Acquire a new sensor sample when available.
-    Sample sample;
+    // ========================================================
+    // 1. ACQUIRE REAL SENSOR DATA
+    // ========================================================
 
-    if (!readSensorSample(sample)) {
+    Sample rawSample;
+    GestureResult result;
+
+    if (!readSensorSample(rawSample)) {
         delay(1);
         return;
     }
 
-    // Sensor acquisition continues even when
-    // no BLE client is connected.
 
-    if (!deviceConnected) {
+    // ========================================================
+    // 2. CALIBRATION / GESTURE PROCESSING
+    // ========================================================
+
+    // Gesture processing always runs, even when the
+    // Mac is disconnected or streaming is disabled.
+
+    if (!gestureCalibrationComplete()) {
+
+        calibrateGestureProcessor(rawSample);
+
+    } else {
+
+    result = processGestureSample(rawSample);
+
+    if (result.completed) {
+
+        Serial.println();
+
+        Serial.println("========== GESTURE RESULT ==========");
+
+        Serial.print("[GESTURE] Classification: ");
+
+        Serial.println(gestureTypeName(result.type));
+
+        Serial.print("[GESTURE] Samples: ");
+
+        Serial.println(result.sampleCount);
+
+        Serial.println("====================================");
+
+    }
+    }
+
+
+    // ========================================================
+    // 3. CONTINUOUS RAW SENSOR BLE STREAMING
+    // ========================================================
+
+    // Do not stop sensor acquisition or gesture processing
+    // when BLE is disconnected.
+
+    if (!deviceConnected || !streamingEnabled) {
         return;
     }
 
-    if (!streamingEnabled) {
-        return;
-    }
-
-    // Preserve existing maximum-speed mode for now.
-    // Normal mode transmits each acquired sample.
+    // The existing DATA packet format is preserved:
     //
-    // Because acquisition is currently ~70 Hz,
-    // both modes will have approximately the same
-    // maximum sample production rate.
-    //
-    // We'll revise maximum-speed benchmarking
-    // separately using buffered samples.
+    // DATA,DEVICE_ID,sequence,timestamp,
+    // ax,ay,az,gx,gy,gz,hall1,hall2
 
     String message =
         "DATA,"
@@ -853,33 +986,59 @@ void loop() {
         + ","
         + String(sequence)
         + ","
-        + String(sample.time / 1000UL)
+        + String(rawSample.time / 1000UL)
         + ","
-        + String(sample.ax, 2)
+        + String(rawSample.ax, 2)
         + ","
-        + String(sample.ay, 2)
+        + String(rawSample.ay, 2)
         + ","
-        + String(sample.az, 2)
+        + String(rawSample.az, 2)
         + ","
-        + String(sample.gx, 2)
+        + String(rawSample.gx, 2)
         + ","
-        + String(sample.gy, 2)
+        + String(rawSample.gy, 2)
         + ","
-        + String(sample.gz, 2)
+        + String(rawSample.gz, 2)
         + ","
-        + String(sample.hall1)
+        + String(rawSample.hall1)
         + ","
-        + String(sample.hall2);
+        + String(rawSample.hall2);
 
-    sensorCharacteristic->setValue(
-        message.c_str()
-    );
+// ============================================================
+// TRANSMIT RAW SENSOR PACKET
+// ============================================================
 
-    sensorCharacteristic->notify();
+// This is the sequence assigned to the current sample.
+      uint32_t currentSensorSequence = sequence;
 
-    sequence++;
+      sensorCharacteristic->setValue(
+          message.c_str()
+      );
 
-    // Avoid printing every sample.
+      sensorCharacteristic->notify();
+
+      sequence++;
+
+      // ============================================================
+      // TRANSMIT GESTURE EVENT AFTER SENSOR DATA
+      // ============================================================
+
+      if (result.completed) {
+
+          sendGestureEvent(
+              result,
+              currentSensorSequence
+          );
+      }
+
+
+    // ========================================================
+    // 4. PERIODIC DEBUG OUTPUT
+    // ========================================================
+
+    // Avoid printing every packet, which would add
+    // unnecessary serial I/O overhead.
+
     if (sequence % 100 == 0) {
 
         Serial.print(

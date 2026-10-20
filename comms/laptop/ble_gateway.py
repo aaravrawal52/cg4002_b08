@@ -1,4 +1,5 @@
 import asyncio
+from http import client
 import random
 import time
 import zlib
@@ -44,10 +45,13 @@ DUMMY_SAMPLES = [
 ]
 
 command_sequence = 0
-
+stream_active = False
+stream_packets_since_connect = 0
+stream_mode = None
 sensor_queue = asyncio.Queue(maxsize=500)
 gesture_queue = asyncio.Queue(maxsize=50)
 phone_clients = set() #for multiple phones
+stream_packet_received = asyncio.Event()
 
 ble_received = 0
 ble_missing = 0
@@ -56,8 +60,11 @@ ultra96_forwarded = 0
 ble_bytes_received = 0
 
 last_ble_sequence = None
+streaming_requested = False
 
 def handle_stream_packet(message, byte_count):
+    global stream_active
+    global stream_packets_since_connect 
     global ble_received
     global ble_missing
     global ble_bytes_received
@@ -113,17 +120,139 @@ def handle_stream_packet(message, byte_count):
                     f"[STREAM] Missing "
                     f"{missing} packet(s)"
                 )
+        stream_active = True
+        stream_packets_since_connect += 1
+
+        # This also proves restore_stream() that data resumed.
+        stream_packet_received.set()
 
         last_ble_sequence = sequence
 
         ble_received += 1
         ble_bytes_received += byte_count
 
+        # Display one representative packet every 50 packets.
+# Printing every ~71 Hz packet would clutter the terminal
+# and add unnecessary I/O overhead.
+        if sequence % 50 == 0:
+            print()
+            print(
+                f"[GLOVE -> MAC] DATA "
+                f"device={device_id} "
+                f"seq={sequence} "
+                f"timestamp={timestamp}"
+            )
+            print(
+                f"  accel=({ax:.2f}, {ay:.2f}, {az:.2f})"
+            )
+            print(
+                f"  gyro=({gx:.2f}, {gy:.2f}, {gz:.2f})"
+            )
+            print(
+                f"  hall=({hall1}, {hall2})"
+            )
+
     except ValueError as error:
         print(
             f"[STREAM] Parse error: {error}"
         )
-    
+async def stream_monitor():
+    global stream_active
+    global stream_packets_since_connect
+
+    previous_count = 0
+
+    while True:
+        await asyncio.sleep(2)
+
+        if stream_mode is None:
+            continue
+
+        current_count = stream_packets_since_connect
+
+        packets_last_2s = (
+            current_count - previous_count
+        )
+
+        rate = packets_last_2s / 2.0
+
+        previous_count = current_count
+
+        if packets_last_2s > 0:
+
+            print(
+                f"\n[STREAM] LIVE ✓ "
+                f"rate={rate:.1f} Hz "
+                f"session_packets={current_count}"
+            )
+
+        else:
+
+            print(
+                "\n[STREAM] WARNING: "
+                "no packets received in last 2 seconds"
+            )
+
+
+async def restore_stream(client):
+    global stream_mode
+
+    if stream_mode is None:
+        return
+
+    command = (
+        b"CONTROL,START_STREAM"
+        if stream_mode == "normal"
+        else b"CONTROL,MAX_STREAM"
+    )
+
+    stream_packet_received.clear()
+
+    while client.is_connected:
+
+        print(
+            f"[BLE] Restoring {stream_mode} stream..."
+        )
+
+        try:
+            await client.write_gatt_char(
+                COMMAND_CHAR_UUID,
+                command,
+                response=True
+            )
+            await asyncio.wait_for(
+                stream_packet_received.wait(),
+                timeout=2.0
+            )
+
+        except Exception as error:
+            print(
+                f"[BLE] Restore write failed: {error}"
+            )
+            return
+
+        # Don't trust the successful WRITE.
+        # Wait for proof: an actual stream notification.
+        try:
+            await asyncio.wait_for(
+                stream_packet_received.wait(),
+                timeout=2.0
+            )
+
+            print(
+                "[BLE] Stream successfully resumed"
+            )
+
+            return
+
+        except asyncio.TimeoutError:
+            print(
+                "[BLE] No stream packets received - "
+                "retrying START_STREAM..."
+            )
+
+            await asyncio.sleep(1)
+
 def parse_ble_message(data):
     message = data.decode("utf-8")
 
@@ -561,6 +690,7 @@ def calculate_crc32(text):
 
 async def keyboard_sender(client):
     global command_sequence
+    global stream_mode
 
     print()
     print("========== COMMANDS ==========")
@@ -578,6 +708,9 @@ async def keyboard_sender(client):
             "SEND> "
         )
         if text.lower() == "s":
+
+            stream_mode = "normal"
+
             await client.write_gatt_char(
                 COMMAND_CHAR_UUID,
                 b"CONTROL,START_STREAM",
@@ -585,11 +718,15 @@ async def keyboard_sender(client):
             )
 
             print(
-                "[STREAM] Started 100 Hz stream"
+                "[STREAM] Reliable stream started"
             )
+
             continue
 
         if text.lower() == "x":
+
+            stream_mode = None
+
             await client.write_gatt_char(
                 COMMAND_CHAR_UUID,
                 b"CONTROL,STOP_STREAM",
@@ -599,6 +736,7 @@ async def keyboard_sender(client):
             print(
                 "[STREAM] Stopped"
             )
+
             continue
 
         if text.lower() == "q":
@@ -674,7 +812,16 @@ async def keyboard_sender(client):
 
         command_sequence += 1
 async def ble_connection_manager():
+    global stream_packets_since_connect
+    global stream_active
+    global stream_mode
+    global last_ble_sequence
+
     while True:
+
+        # ------------------------------------------------
+        # SEARCH FOR FIREBEETLE
+        # ------------------------------------------------
 
         print(
             f"[BLE] Searching for {DEVICE_NAME}..."
@@ -686,6 +833,7 @@ async def ble_connection_manager():
         )
 
         if device is None:
+
             print(
                 "[BLE] Glove not found. "
                 "Retrying in 2 seconds..."
@@ -694,13 +842,52 @@ async def ble_connection_manager():
             await asyncio.sleep(2)
             continue
 
-        print("[BLE] Glove found")
+        print(
+            "[BLE] Glove found"
+        )
+
+
+        # ------------------------------------------------
+        # CONNECT TO FIREBEETLE
+        # ------------------------------------------------
 
         try:
 
             async with BleakClient(device) as client:
 
-                print("[BLE] Connected")
+                print(
+                    "[BLE] Connected"
+                )
+                last_ble_sequence = None
+                stream_packets_since_connect = 0
+                stream_active = False
+
+
+                # ----------------------------------------
+                # NEW BLE SESSION
+                # ----------------------------------------
+                #
+                # The FireBeetle may have rebooted.
+                # Its sequence counter may therefore
+                # restart from zero.
+                #
+                # Forget the sequence number from the
+                # previous BLE session.
+                # ----------------------------------------
+
+                last_ble_sequence = None
+
+
+                # ----------------------------------------
+                # SUBSCRIBE TO NOTIFICATIONS FIRST
+                # ----------------------------------------
+                #
+                # Do this BEFORE restoring streaming.
+                #
+                # Otherwise the FireBeetle could start
+                # sending notifications before the Mac
+                # has subscribed to them.
+                # ----------------------------------------
 
                 await client.start_notify(
                     SENSOR_CHAR_UUID,
@@ -708,31 +895,69 @@ async def ble_connection_manager():
                 )
 
                 print(
+
                     "[BLE] Notifications subscribed"
+
                 )
 
+                last_ble_sequence = None
+
+                await asyncio.sleep(1)
+
+                await restore_stream(client)
+
                 keyboard = asyncio.create_task(
+
                     keyboard_sender(client)
+
                 )
 
                 print(
+
                     "[BLE] FireBeetle ready"
+
                 )
+
+
+                # ----------------------------------------
+                # START KEYBOARD INPUT FOR THIS CONNECTION
+                # ----------------------------------------
+
+
+
+                # ----------------------------------------
+                # WAIT UNTIL BLE CONNECTION IS LOST
+                # ----------------------------------------
 
                 while client.is_connected:
                     await asyncio.sleep(1)
+
 
                 print(
                     "[BLE] FireBeetle disconnected"
                 )
 
+
+                # This keyboard task references the old
+                # BleakClient, so cancel it before
+                # reconnecting.
                 keyboard.cancel()
+
+
+        # ------------------------------------------------
+        # BLE ERROR
+        # ------------------------------------------------
 
         except Exception as error:
 
             print(
                 f"[BLE] Connection lost: {error}"
             )
+
+
+        # ------------------------------------------------
+        # RECONNECT
+        # ------------------------------------------------
 
         print(
             "[BLE] Reconnecting in 2 seconds..."
@@ -828,6 +1053,9 @@ async def main():
     ble_manager = asyncio.create_task(
         ble_connection_manager()
     )
+    stream_monitor_task = asyncio.create_task(
+        stream_monitor()
+    )
 
     print()
     print(
@@ -851,6 +1079,7 @@ async def main():
         phone.cancel()
         stats.cancel()
         ble_manager.cancel()
+        stream_monitor_task.cancel()
 
         phone_server.close()
 

@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import time
-import zlib
+
+from pathlib import Path
 
 from bleak import BleakClient
 from bleak import BleakScanner
@@ -15,7 +17,9 @@ SENSOR_CHAR_UUID = (
 COMMAND_CHAR_UUID = (
     "12345678-1234-1234-1234-1234567890ad"
 )
-
+FILE_PATH = Path(
+    "comms/laptop/test_data.txt"
+)
 
 file_result = None
 
@@ -40,7 +44,7 @@ def notification_handler(characteristic, data):
 
     file_result = {
         "bytes": int(parts[1]),
-        "crc": int(parts[2]),
+        "md5": parts[2].lower(),
     }
 
 
@@ -54,27 +58,39 @@ async def main():
 
     # ASCII only for this first test because our current
     # FILE_DATA framing uses text.
-    file_data = (
-        b"CG4002_FILE_TRANSFER_TEST_"
-        * 100
-    )
+    if not FILE_PATH.exists():
+
+        print(
+            f"[FILE] ERROR: "
+            f"{FILE_PATH} does not exist"
+        )
+
+        return
+
+
+# Read actual file bytes from disk.
+    file_data = FILE_PATH.read_bytes()
 
     expected_size = len(file_data)
 
-    expected_crc = (
-        zlib.crc32(file_data)
-        & 0xFFFFFFFF
+    expected_md5 = hashlib.md5(
+        file_data
+    ).hexdigest()
+
+
+    print(
+        f"[FILE] File: {FILE_PATH}"
     )
 
     print(
-        f"[FILE] Size: {expected_size} bytes"
+        f"[FILE] Size: "
+        f"{expected_size} bytes"
     )
 
     print(
-        f"[FILE] Expected CRC32: "
-        f"{expected_crc:08X}"
+        f"[FILE] Original MD5: "
+        f"{expected_md5}"
     )
-
 
     # --------------------------------
     # FIND FIREBEETLE
@@ -235,7 +251,12 @@ async def main():
         )
 
         print(
-            f"Expected bytes: {expected_size}"
+            f"File: {FILE_PATH.name}"
+        )
+
+        print(
+            f"Expected bytes: "
+            f"{expected_size}"
         )
 
         print(
@@ -244,13 +265,13 @@ async def main():
         )
 
         print(
-            f"Expected CRC32: "
-            f"{expected_crc:08X}"
+            f"Original MD5: "
+            f"{expected_md5}"
         )
 
         print(
-            f"Received CRC32: "
-            f"{file_result['crc']:08X}"
+            f"Received MD5: "
+            f"{file_result['md5']}"
         )
 
 
@@ -258,19 +279,20 @@ async def main():
             file_result["bytes"]
             == expected_size
             and
-            file_result["crc"]
-            == expected_crc
+            file_result["md5"]
+            == expected_md5
         ):
 
             print(
-                "Result: VERIFIED ✓"
+                "Result: VERIFIED"
             )
 
         else:
 
             print(
-                "Result: FAILED ✗"
+                "Result: FAILED"
             )
+
 
         print(
             "======================================="

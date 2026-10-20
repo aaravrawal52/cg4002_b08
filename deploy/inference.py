@@ -39,9 +39,10 @@ class GestureClassifier:
 
     def __init__(self, deploy_dir=DEPLOY_DIR):
         deploy_dir = Path(deploy_dir)
-        overlay = DpuOverlay(DPU_BIT)
-        overlay.load_model(str(deploy_dir / "compiled_model.xmodel"))
-        self.dpu = overlay.runner
+        # Keep the overlay on self: if it's garbage collected, the runner's DPU resources are freed (segfault)
+        self.overlay = DpuOverlay(DPU_BIT)
+        self.overlay.load_model(str(deploy_dir / "compiled_model.xmodel"))
+        self.dpu = self.overlay.runner
 
         input_tensors = self.dpu.get_input_tensors()
         output_tensors = self.dpu.get_output_tensors()

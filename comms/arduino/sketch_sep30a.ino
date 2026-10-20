@@ -4,6 +4,34 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include "mbedtls/md5.h"
+#include "SensorManager.h"
+
+
+// ============================================================
+// FIREBEETLE DEVICE CONFIGURATION
+// ============================================================
+
+// 1 = First FireBeetle
+// 2 = Second FireBeetle
+
+#define GLOVE_NUMBER 1
+
+#if GLOVE_NUMBER == 1
+
+  #define DEVICE_ID "GLOVE_01"
+  #define BLE_DEVICE_NAME "CG4002_GLOVE_01"
+
+#elif GLOVE_NUMBER == 2
+
+  #define DEVICE_ID "GLOVE_02"
+  #define BLE_DEVICE_NAME "CG4002_GLOVE_02"
+
+#else
+
+  #error "Invalid GLOVE_NUMBER"
+
+#endif
 
 
 // ============================================================
@@ -64,8 +92,13 @@ bool maxSpeedMode = false;
 // file transfer
 uint32_t fileExpectedSize = 0;
 uint32_t fileReceivedSize = 0;
-uint32_t fileCRC = 0xFFFFFFFF;
+
 bool fileTransferActive = false;
+
+// Incremental MD5 state.
+// This lets us hash chunks as they arrive without storing
+// the entire file in ESP32 RAM.
+mbedtls_md5_context fileMD5Context;
 
 // ============================================================
 // BLE SERVER CALLBACKS
@@ -252,37 +285,56 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
 // FILE TRANSFER: START
 // ========================================================
 
-    if (command.startsWith("FILE_START,")) {
+if (command.startsWith("FILE_START,")) {
 
-      int comma =
-        command.indexOf(',');
+  int comma =
+    command.indexOf(',');
 
-      String sizeString =
-        command.substring(comma + 1);
+  String sizeString =
+    command.substring(comma + 1);
 
-      fileExpectedSize =
-        sizeString.toInt();
+  fileExpectedSize =
+    sizeString.toInt();
 
-      fileReceivedSize = 0;
+  fileReceivedSize = 0;
 
-      fileCRC = 0xFFFFFFFF;
+  fileTransferActive = true;
 
-      fileTransferActive = true;
 
-      Serial.print(
-        "[FILE] Transfer started. Expected: "
-      );
+  // Reset MD5 context for a new file.
+  mbedtls_md5_free(
+    &fileMD5Context
+  );
 
-      Serial.print(
-        fileExpectedSize
-      );
+  mbedtls_md5_init(
+    &fileMD5Context
+  );
 
-      Serial.println(
-        " bytes"
-      );
+  mbedtls_md5_starts(
+    &fileMD5Context
+  );
 
-      return;
-    }
+
+  Serial.println();
+
+  Serial.println(
+    "========== FILE TRANSFER =========="
+  );
+
+  Serial.print(
+    "[FILE] Expected size: "
+  );
+
+  Serial.print(
+    fileExpectedSize
+  );
+
+  Serial.println(
+    " bytes"
+  );
+
+  return;
+}
     // ========================================================
 // FILE TRANSFER: DATA
 // ========================================================
@@ -298,25 +350,32 @@ if (command.startsWith("FILE_DATA,")) {
     return;
   }
 
+
   int comma =
     command.indexOf(',');
 
   String payload =
-    command.substring(comma + 1);
+    command.substring(
+      comma + 1
+    );
 
-  const uint8_t* bytes =
-    reinterpret_cast<const uint8_t*>(
+
+  const unsigned char* bytes =
+    reinterpret_cast<const unsigned char*>(
       payload.c_str()
     );
 
   size_t length =
     payload.length();
 
-  fileCRC = updateCRC32(
-    fileCRC,
+
+  // Feed this chunk into the running MD5.
+  mbedtls_md5_update(
+    &fileMD5Context,
     bytes,
     length
   );
+
 
   fileReceivedSize += length;
 
@@ -340,20 +399,46 @@ if (command == "FILE_END") {
 
   fileTransferActive = false;
 
-  uint32_t finalCRC =
-    fileCRC ^ 0xFFFFFFFF;
 
+  // MD5 is 16 bytes = 128 bits.
+  unsigned char digest[16];
+
+  mbedtls_md5_finish(
+    &fileMD5Context,
+    digest
+  );
+
+
+  // Convert binary MD5 into the usual
+  // 32-character hexadecimal representation.
+  char md5String[33];
+
+  for (int i = 0; i < 16; i++) {
+
+    sprintf(
+      &md5String[i * 2],
+      "%02x",
+      digest[i]
+    );
+  }
+
+  md5String[32] = '\0';
+
+
+  // Return verification information to Mac.
   String result =
     "FILE_RESULT,"
     + String(fileReceivedSize)
     + ","
-    + String(finalCRC);
+    + String(md5String);
+
 
   sensorCharacteristic->setValue(
     result.c_str()
   );
 
   sensorCharacteristic->notify();
+
 
   Serial.println();
 
@@ -378,12 +463,11 @@ if (command == "FILE_END") {
   );
 
   Serial.print(
-    "CRC32: "
+    "Received MD5: "
   );
 
   Serial.println(
-    finalCRC,
-    HEX
+    md5String
   );
 
   Serial.println(
@@ -539,6 +623,46 @@ if (command == "FILE_END") {
 void setup() {
 
   Serial.begin(115200);
+  delay(1000);
+
+    Serial.println();
+
+    Serial.println("========== BOOT DEBUG ==========");
+
+    Serial.println("[DEBUG] Entered setup()");
+
+    Serial.print("[DEBUG] Chip model: ");
+
+    Serial.println(ESP.getChipModel());
+
+    Serial.println("[DEBUG] Starting sensor initialization");
+
+    if (!initializeSensors()) {
+
+        Serial.println("[ERROR] Sensor initialization failed");
+
+        while (true) {
+
+            delay(1000);
+
+        }
+
+    }
+
+    Serial.println("[DEBUG] Sensor initialization complete");
+  if (!initializeSensors()) {
+
+    Serial.println(
+        "[ERROR] Sensor initialization failed"
+    );
+
+    while (true) {
+        delay(1000);
+    }
+}
+  mbedtls_md5_init(
+  &fileMD5Context
+);
 
   delay(1000);
 
@@ -551,6 +675,13 @@ void setup() {
   Serial.println(
     "      CG4002 FIREBEETLE COMMS"
   );
+  Serial.print(
+    "[DEVICE] ID: "
+  );
+
+  Serial.println(
+    DEVICE_ID
+  );
 
   Serial.println(
     "===================================="
@@ -562,7 +693,7 @@ void setup() {
   // ----------------------------------------------------------
 
   BLEDevice::init(
-    "CG4002_GLOVE"
+    BLE_DEVICE_NAME
   );
 
 
@@ -663,8 +794,16 @@ void setup() {
   BLEDevice::startAdvertising();
 
 
+  Serial.print(
+
+    "[BLE] Advertising as "
+
+  );
+
   Serial.println(
-    "[BLE] Advertising as CG4002_GLOVE"
+
+    BLE_DEVICE_NAME
+
   );
 
   Serial.println(
@@ -679,94 +818,74 @@ void setup() {
 
 void loop() {
 
-  // If nobody is connected, don't generate dummy traffic.
+    // Acquire a new sensor sample when available.
+    Sample sample;
 
-  if (!deviceConnected) {
+    if (!readSensorSample(sample)) {
+        delay(1);
+        return;
+    }
 
-    delay(10);
+    // Sensor acquisition continues even when
+    // no BLE client is connected.
 
-    return;
-  }
+    if (!deviceConnected) {
+        return;
+    }
 
+    if (!streamingEnabled) {
+        return;
+    }
 
-  unsigned long now =
-    millis();
-
-
-  // ----------------------------------------------------------
-  // PERIODIC DUMMY SENSOR PACKET
-  // ----------------------------------------------------------
-
-    if (
-        streamingEnabled &&
-        (
-          maxSpeedMode ||
-          now - lastSendTime >= SEND_INTERVAL_MS
-        )
-    ) { 
-
-    lastSendTime = now;
-
-
-    // Current dummy packet:
+    // Preserve existing maximum-speed mode for now.
+    // Normal mode transmits each acquired sample.
     //
-    // DATA,<sequence>,<timestamp>
+    // Because acquisition is currently ~70 Hz,
+    // both modes will have approximately the same
+    // maximum sample production rate.
     //
-    // Example:
-    //
-    // DATA,42,15321
-    //
-    // Later this payload will contain actual-format sensor
-    // fields.
+    // We'll revise maximum-speed benchmarking
+    // separately using buffered samples.
 
-float ax = 1.20;
-float ay = -0.40;
-float az = 9.71;
-float gx = 0.10;
-float gy = 0.05;
-float gz = -0.02;
-int hall1 = 2050;
-int hall2 = 2110;
-String message =
-  "DATA,"
-  "GLOVE_01,"
-  + String(sequence)
-  + ","
-  + String(now)
-  + ","
-  + String(ax, 2)
-  + ","
-  + String(ay, 2)
-  + ","
-  + String(az, 2)
-  + ","
-  + String(gx, 2)
-  + ","
-  + String(gy, 2)
-  + ","
-  + String(gz, 2)
-  + ","
-  + String(hall1)
-  + ","
-  + String(hall2);
+    String message =
+        "DATA,"
+        + String(DEVICE_ID)
+        + ","
+        + String(sequence)
+        + ","
+        + String(sample.time / 1000UL)
+        + ","
+        + String(sample.ax, 2)
+        + ","
+        + String(sample.ay, 2)
+        + ","
+        + String(sample.az, 2)
+        + ","
+        + String(sample.gx, 2)
+        + ","
+        + String(sample.gy, 2)
+        + ","
+        + String(sample.gz, 2)
+        + ","
+        + String(sample.hall1)
+        + ","
+        + String(sample.hall2);
 
     sensorCharacteristic->setValue(
-      message.c_str()
+        message.c_str()
     );
-
 
     sensorCharacteristic->notify();
 
-
-    Serial.print(
-      "[DATA] Sent: "
-    );
-
-    Serial.println(
-      message
-    );
-
-
     sequence++;
-  }
+
+    // Avoid printing every sample.
+    if (sequence % 100 == 0) {
+
+        Serial.print(
+            "[SENSOR] BLE seq="
+        );
+
+        Serial.println(sequence);
+    }
 }

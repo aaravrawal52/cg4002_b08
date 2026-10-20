@@ -1,6 +1,11 @@
 import socket
 import random
 
+from data_ingestion import (
+    parse_sensor_message,
+    GestureSegmenter
+)
+
 HOST = "127.0.0.1"
 PORT = 5001
 
@@ -89,6 +94,7 @@ session_ready = False
 device_id = None
 
 expected_sequence = None
+segmenter = GestureSegmenter()
 
 packets_received = 0
 packets_missing = 0
@@ -151,6 +157,7 @@ while True:
                 session_ready = True
 
                 expected_sequence = None
+                segmenter = GestureSegmenter()
 
                 packets_received = 0
                 packets_missing = 0
@@ -193,10 +200,14 @@ while True:
 
         if message.startswith("SENSOR,"):
 
+            # ----------------------------------------
+            # SESSION VALIDATION
+            # ----------------------------------------
+
             if not session_ready:
+
                 print(
-                    "[SERVER] SENSOR rejected: "
-                    "no active session"
+                    "[SERVER] SENSOR rejected: no active session"
                 )
 
                 conn.sendall(
@@ -205,39 +216,54 @@ while True:
 
                 continue
 
-
             try:
-                packet = parse_sensor_message(message)
+
+                # ----------------------------------------
+                # PARSE USING TEAMMATE'S CODE
+                # ----------------------------------------
+
+                row = parse_sensor_message(message)
+
+                sequence = int(row["sequence"])
+
+                tag = row["tag"]
+
+                if tag not in {
+                    "IDLE",
+                    "ACTIVE",
+                    "UNCLASSIFIED"
+                }:
+
+                    raise ValueError(
+                        f"Invalid tag: {tag}"
+                    )
 
                 packets_received += 1
 
-                sequence = packet["sequence"]
-
+                # ----------------------------------------
+                # SEQUENCE TRACKING
+                # ----------------------------------------
 
                 if expected_sequence is None:
+
                     expected_sequence = sequence + 1
 
                 elif sequence == expected_sequence:
+
                     expected_sequence += 1
 
                 elif sequence > expected_sequence:
 
-                    missing = (
-                        sequence - expected_sequence
-                    )
+                    missing = sequence - expected_sequence
 
                     packets_missing += missing
 
+                    expected_sequence = sequence + 1
+
                     print(
                         f"[WARNING] Missing "
-                        f"{missing} packet(s): "
-                        f"expected seq="
-                        f"{expected_sequence}, "
-                        f"received seq="
-                        f"{sequence}"
+                        f"{missing} packet(s)"
                     )
-
-                    expected_sequence = sequence + 1
 
                 else:
 
@@ -245,113 +271,104 @@ while True:
 
                     print(
                         f"[WARNING] Out-of-order "
-                        f"packet: expected seq="
-                        f"{expected_sequence}, "
-                        f"received seq="
-                        f"{sequence}"
+                        f"seq={sequence}"
                     )
 
+                # ----------------------------------------
+                # ML INGESTION
+                # ----------------------------------------
+
+                segment = segmenter.add_row(row)
+
+                if tag == "ACTIVE" and sequence % 50 == 0:
+
+                    print(
+                        f"[SEGMENT] ACTIVE seq={sequence}"
+                    )
+
+                if tag == "UNCLASSIFIED":
+
+                    print(
+                        f"[SEGMENT] UNCLASSIFIED "
+                        f"seq={sequence}"
+                    )
+
+                # ----------------------------------------
+                # COMPLETED GESTURE SEGMENT
+                # ----------------------------------------
+
+                if segment is not None:
+
+                    print()
+                    print(
+                        "========== ML INPUT READY =========="
+                    )
+
+                    print(
+                        f"Source:       {device_id}"
+                    )
+
+                    print(
+                        f"Samples:      {len(segment)}"
+                    )
+
+                    print(
+                        f"First seq:    "
+                        f"{segment[0]['sequence']}"
+                    )
+
+                    print(
+                        f"Last seq:     "
+                        f"{segment[-1]['sequence']}"
+                    )
+
+                    print(
+                        "Status:       READY FOR ML"
+                    )
+
+                    print(
+                        "===================================="
+                    )
+
+                    # Your teammate's actual DPU inference
+                    # will be called here later:
+                    #
+                    # gesture, confidence, inference_ms = (
+                    #     classifier.classify(segment)
+                    # )
+
+                # ----------------------------------------
+                # STATISTICS
+                # ----------------------------------------
 
                 if packets_received % 100 == 0:
 
                     print()
                     print(
-                        "========== COMMS STATS =========="
+                        "========== ULTRA96 STATS =========="
                     )
 
                     print(
-                        f"Device:       {device_id}"
+                        f"Received:     {packets_received}"
                     )
 
                     print(
-                        f"Received:     "
-                        f"{packets_received}"
+                        f"Missing:      {packets_missing}"
                     )
 
                     print(
-                        f"Missing:      "
-                        f"{packets_missing}"
+                        f"Out of order: {packets_out_of_order}"
                     )
 
                     print(
-                        f"Out of order: "
-                        f"{packets_out_of_order}"
+                        f"Invalid:      {invalid_packets}"
                     )
 
                     print(
-                        f"Invalid:      "
-                        f"{invalid_packets}"
+                        "==================================="
                     )
 
-                    print(
-                        f"Last seq:     {sequence}"
-                    )
-
-                    print(
-                        "================================="
-                    )
-
-                # Prototype AI stage:
-
-# Every dummy sensor packet produces one random AI event.
-                gestures = [
-
-                    "SWIPE_LEFT",
-
-                    "SWIPE_RIGHT",
-
-                    "SWIPE_UP",
-
-                    "SWIPE_DOWN",
-
-                    "PINCH",
-
-                    "ROTATE",
-
-                ]
-
-                gesture = random.choice(gestures)
-
-                confidence = round(
-
-                    random.uniform(0.80, 0.99),
-
-                    2
-
-                )
-
-                gesture_message = (
-
-                    f"GESTURE,"
-
-                    f"{gesture_sequence},"
-
-                    f"{gesture},"
-
-                    f"{confidence}\n"
-
-                )
-
-                conn.sendall(
-
-                    gesture_message.encode()
-
-                )
-
-                print(
-
-                    f"[AI] Input seq={packet['sequence']} "
-
-                    f"-> {gesture} "
-
-                    f"confidence={confidence}"
-
-                )
-
-                gesture_sequence += 1
-
-
-            except ValueError as error:
+            except (ValueError, KeyError) as error:
 
                 invalid_packets += 1
 
@@ -365,7 +382,87 @@ while True:
         # ----------------------------
         # UNKNOWN
         # ----------------------------
+        # ============================================================
+        # LOCALLY CLASSIFIED GESTURE
+        # ============================================================
 
+        if message.startswith("LOCAL_GESTURE,"):
+
+            if not session_ready:
+
+                conn.sendall(
+                    b"ERROR,NO_SESSION\n"
+                )
+
+                continue
+
+            try:
+
+                parts = message.split(",")
+
+                if len(parts) != 5:
+
+                    raise ValueError(
+                        "Invalid LOCAL_GESTURE format"
+                    )
+
+                event_device = parts[1]
+
+                event_sequence = int(parts[2])
+
+                sensor_sequence = int(parts[3])
+
+                gesture = parts[4]
+
+                print()
+                print(
+                    "========== LOCAL GESTURE =========="
+                )
+
+                print(
+                    f"Device:       {event_device}"
+                )
+
+                print(
+                    f"Event seq:    {event_sequence}"
+                )
+
+                print(
+                    f"Sensor seq:   {sensor_sequence}"
+                )
+
+                print(
+                    f"Gesture:      {gesture}"
+                )
+
+                print(
+                    "==================================="
+                )
+
+                # Locally classified gestures bypass ML.
+
+                response = (
+                    f"GESTURE,"
+                    f"{gesture_sequence},"
+                    f"{gesture},"
+                    f"1.0\n"
+                )
+
+                conn.sendall(
+                    response.encode()
+                )
+
+                gesture_sequence += 1
+
+            except ValueError as error:
+
+                invalid_packets += 1
+
+                print(
+                    f"[INVALID LOCAL_GESTURE] {error}"
+                )
+
+            continue
         print(
             f"[SERVER] Unknown message: {message}"
         )

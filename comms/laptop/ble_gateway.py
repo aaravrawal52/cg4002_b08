@@ -63,30 +63,24 @@ last_ble_sequence = None
 streaming_requested = False
 
 def handle_stream_packet(message, byte_count):
+
     global stream_active
-    global stream_packets_since_connect 
+    global stream_packets_since_connect
     global ble_received
     global ble_missing
     global ble_bytes_received
     global last_ble_sequence
+    global queue_dropped
 
     try:
         parts = message.split(",")
 
-        # DATA
-        # GLOVE_01
-        # sequence
-        # timestamp
-        # ax ay az
-        # gx gy gz
-        # hall1 hall2
-        #
-        # Total = 12 fields
+        # DATA,device,sequence,timestamp,
+        # ax,ay,az,gx,gy,gz,hall1,hall2,tag
 
-        if len(parts) != 12:
+        if len(parts) != 13:
             print(
-                f"[STREAM] Invalid packet "
-                f"fields={len(parts)}"
+                f"[STREAM] Invalid field count: {len(parts)}"
             )
             return
 
@@ -94,6 +88,13 @@ def handle_stream_packet(message, byte_count):
             return
 
         device_id = parts[1]
+
+        if device_id != DEVICE_ID:
+            print(
+                f"[STREAM] Unexpected device: {device_id}"
+            )
+            return
+
         sequence = int(parts[2])
         timestamp = int(parts[3])
 
@@ -108,51 +109,119 @@ def handle_stream_packet(message, byte_count):
         hall1 = int(parts[10])
         hall2 = int(parts[11])
 
+        tag = parts[12]
+
+        if tag not in {
+            "IDLE",
+            "ACTIVE",
+            "UNCLASSIFIED"
+        }:
+            print(f"[STREAM] Invalid tag: {tag}")
+            return
+
+        # ----------------------------------------
+        # SEQUENCE TRACKING
+        # ----------------------------------------
+
         if last_ble_sequence is not None:
+
             expected = last_ble_sequence + 1
 
             if sequence > expected:
-                missing = sequence - expected
 
+                missing = sequence - expected
                 ble_missing += missing
 
                 print(
-                    f"[STREAM] Missing "
-                    f"{missing} packet(s)"
+                    f"[STREAM] Missing {missing} packet(s)"
                 )
-        stream_active = True
-        stream_packets_since_connect += 1
 
-        # This also proves restore_stream() that data resumed.
-        stream_packet_received.set()
+            elif sequence < expected:
+
+                print(
+                    f"[STREAM] Sequence reset/out of order: "
+                    f"expected={expected}, received={sequence}"
+                )
 
         last_ble_sequence = sequence
 
         ble_received += 1
         ble_bytes_received += byte_count
 
-        # Display one representative packet every 50 packets.
-# Printing every ~71 Hz packet would clutter the terminal
-# and add unnecessary I/O overhead.
+        stream_active = True
+        stream_packets_since_connect += 1
+
+        stream_packet_received.set()
+
+        # ----------------------------------------
+        # CONVERT BLE PACKET TO ML FORMAT
+        # ----------------------------------------
+
+        # Incoming:
+        # DATA,GLOVE_01,seq,timestamp,...,tag
+        #
+        # Outgoing:
+        # SENSOR,seq,timestamp,...,tag
+
+        tcp_message = (
+            "SENSOR,"
+            + ",".join(parts[2:])
+            + "\n"
+        )
+
+        # ----------------------------------------
+        # QUEUE FOR ULTRA96
+        # ----------------------------------------
+
+        try:
+
+            sensor_queue.put_nowait(tcp_message)
+
+        except asyncio.QueueFull:
+
+            queue_dropped += 1
+
+            print(
+                f"[QUEUE] FULL - dropped seq={sequence}"
+            )
+
+            return
+
+        # ----------------------------------------
+        # HUMAN-READABLE OUTPUT
+        # ----------------------------------------
+
         if sequence % 50 == 0:
+
             print()
             print(
-                f"[GLOVE -> MAC] DATA "
+                f"[GLOVE -> MAC] "
                 f"device={device_id} "
                 f"seq={sequence} "
-                f"timestamp={timestamp}"
+                f"tag={tag}"
             )
+
             print(
                 f"  accel=({ax:.2f}, {ay:.2f}, {az:.2f})"
             )
+
             print(
                 f"  gyro=({gx:.2f}, {gy:.2f}, {gz:.2f})"
             )
+
             print(
                 f"  hall=({hall1}, {hall2})"
             )
 
+        if tag == "UNCLASSIFIED":
+
+            print(
+                f"[GESTURE] UNCLASSIFIED "
+                f"seq={sequence} forwarded to Ultra96"
+            )
+
     except ValueError as error:
+
         print(
             f"[STREAM] Parse error: {error}"
         )
@@ -273,6 +342,96 @@ def parse_ble_message(data):
         "timestamp": int(parts[2]),
     }
 
+def handle_local_gesture(message):
+
+    global queue_dropped
+
+    # ----------------------------------------
+    # EXTRACT CRC
+    # ----------------------------------------
+
+    payload, separator, crc_text = (
+        message.rpartition(",")
+    )
+
+    if not separator:
+        print("[GESTURE] Missing CRC")
+        return
+
+    try:
+        received_crc = int(crc_text, 16)
+
+    except ValueError:
+        print("[GESTURE] Invalid CRC")
+        return
+
+    calculated_crc = calculate_crc32(payload)
+
+    if received_crc != calculated_crc:
+
+        print(
+            "[GESTURE] CRC FAILED - packet dropped"
+        )
+
+        return
+
+    # ----------------------------------------
+    # PARSE GESTURE
+    # ----------------------------------------
+
+    parts = payload.split(",")
+
+    if len(parts) != 5:
+        print("[GESTURE] Invalid field count")
+        return
+
+    if parts[0] != "LOCAL_GESTURE":
+        return
+
+    device_id = parts[1]
+
+    if device_id != DEVICE_ID:
+        print("[GESTURE] Unexpected device")
+        return
+
+    try:
+        event_sequence = int(parts[2])
+        sensor_sequence = int(parts[3])
+
+    except ValueError:
+        print("[GESTURE] Invalid sequence")
+        return
+
+    gesture = parts[4]
+
+    # ----------------------------------------
+    # FORWARD TO ULTRA96
+    # ----------------------------------------
+
+    tcp_message = payload + "\n"
+
+    try:
+
+        sensor_queue.put_nowait(tcp_message)
+
+    except asyncio.QueueFull:
+
+        queue_dropped += 1
+
+        print(
+            "[QUEUE] FULL - local gesture dropped"
+        )
+
+        return
+
+    print()
+    print(
+        f"[GESTURE] LOCAL "
+        f"device={device_id} "
+        f"event={event_sequence} "
+        f"sensor_seq={sensor_sequence} "
+        f"gesture={gesture}"
+    )
 
 def notification_handler(characteristic, data):
     global ble_received
@@ -286,11 +445,9 @@ def notification_handler(characteristic, data):
 
         # Ignore the periodic FireBeetle DATA stream
         # for this keyboard pipeline test.
-        if message.startswith("DATA,"):
-            handle_stream_packet(
-                message,
-                len(data)
-            )
+        if message.startswith("LOCAL_GESTURE,"):
+
+            handle_local_gesture(message)
 
             return
 
@@ -417,66 +574,53 @@ def notification_handler(characteristic, data):
 
 
 async def ultra96_sender(writer):
+
     global ultra96_forwarded
 
     while True:
-        sample = await sensor_queue.get()
 
-        sequence = sample["sequence"]
-        timestamp = sample["timestamp"]
+        item = await sensor_queue.get()
 
+        try:
 
-        message = (
+            # Continuous sensor packets and gesture events
+            # are already formatted as TCP messages.
 
-            f"SENSOR,"
+            if isinstance(item, str):
 
-            f"{sample['sequence']},"
+                message = item
 
-            f"{sample['timestamp']},"
+            else:
 
-            f"{sample['ax']},"
+                # Preserve keyboard ENTER pipeline.
+                sample = item
 
-            f"{sample['ay']},"
+                message = (
+                    f"SENSOR,"
+                    f"{sample['sequence']},"
+                    f"{sample['timestamp']},"
+                    f"{sample['ax']},"
+                    f"{sample['ay']},"
+                    f"{sample['az']},"
+                    f"{sample['gx']},"
+                    f"{sample['gy']},"
+                    f"{sample['gz']},"
+                    f"{sample['hall1']},"
+                    f"{sample['hall2']},"
+                    f"IDLE\n"
+                )
 
-            f"{sample['az']},"
+            writer.write(
+                message.encode("utf-8")
+            )
 
-            f"{sample['gx']},"
+            await writer.drain()
 
-            f"{sample['gy']},"
+            ultra96_forwarded += 1
 
-            f"{sample['gz']},"
+        finally:
 
-            f"{sample['hall1']},"
-
-            f"{sample['hall2']}\n"
-
-        )
-
-        if ultra96_forwarded % 100 == 0:
-            '''print(
-                f"[DEBUG] About to write seq={sequence}"
-            )'''
-
-        writer.write(
-            message.encode()
-        )
-
-        if ultra96_forwarded % 100 == 0:
-            '''print(
-                f"[DEBUG] Write done seq={sequence}, "
-                f"waiting for drain"
-            )'''
-
-        await writer.drain()
-
-        if ultra96_forwarded % 100 == 0:
-            '''print(
-                f"[DEBUG] Drain done seq={sequence}"
-            )'''
-
-        ultra96_forwarded += 1
-
-        sensor_queue.task_done()
+            sensor_queue.task_done()
 
 
 async def stats_task():
@@ -827,10 +971,23 @@ async def ble_connection_manager():
             f"[BLE] Searching for {DEVICE_NAME}..."
         )
 
-        device = await BleakScanner.find_device_by_name(
-            DEVICE_NAME,
-            timeout=10
+        discovered = await BleakScanner.discover(
+            timeout=10,
+            return_adv=True
         )
+
+        device = None
+
+        for _, (candidate, advertisement) in discovered.items():
+
+            advertised_name = (
+                advertisement.local_name
+                or candidate.name
+            )
+
+            if advertised_name == DEVICE_NAME:
+                device = candidate
+                break
 
         if device is None:
 

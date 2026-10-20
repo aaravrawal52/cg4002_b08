@@ -77,10 +77,11 @@ int count = 0;
 #endif
 
 struct Sample {
-  unsigned long time;
-  float ax, ay, az;
-  float gx, gy, gz;
-  int hall1, hall2;
+    unsigned long time;
+    float ax, ay, az;
+    float gx, gy, gz;
+    int hall1, hall2;
+    String tag;
 };
 
 struct GesturePose {
@@ -105,12 +106,13 @@ struct Packet {
     float worldX, worldY, worldZ;
     float gx, gy, gz;
     int hall1, hall2;
+    String tag;
 };
 Packet gesturePacket[MAX_SAMPLES];
 
-void classifyGesture();
+String classifyGesture();
 void processSample(const Sample &sample);
-void finishGesture();
+String finishGesture();
 
 void appendGestureSample(const Sample &sample, const GesturePose &pose) {
     if (sampleCount >= MAX_SAMPLES) return;
@@ -344,6 +346,7 @@ void processSample(Sample &sample) {
     bool hallMoving = false;
     bool moving = gestureDetect(sample, imuMoving, hallMoving);
 
+    sample.tag = "IDLE";
     if (!gestureActive) {
 
         //Determine Start of Gesture
@@ -360,6 +363,7 @@ void processSample(Sample &sample) {
 
         if (startConfirmationCount >= START_CONFIRMATION_COUNT) {
             gestureActive = true;
+            sample.tag = "ACTIVE";
             startConfirmationCount = 0;
             sampleCount = 0;
             lastMotionTime = sample.time;
@@ -384,18 +388,16 @@ void processSample(Sample &sample) {
         if (sample.time - lastMotionTime >= QUIET_TIME_US ||
             sample.time - gestureSamples[0].time >= MAX_GESTURE_US || sampleCount >= MAX_SAMPLES) {
             Serial.println("Gesture finished");
-            finishGesture();
+            sample.tag = finishGesture();
         }
     }
-
-
 }
 
 float hallChange(int value, float baseline) {
   return fabsf(value - baseline);
 }
 
-void classifyGesture() {
+String classifyGesture() {
     if (sampleCount < 3) {
         Serial.println("no gesture detected");
         return;
@@ -538,17 +540,6 @@ void classifyGesture() {
             minVerticalAcceleration = verticalAcceleration;
         }
 
-        //populate gesturePacket with the sample data and pose for transmission to the ML model
-        gesturePacket[i].time = sample.time;
-        gesturePacket[i].worldX = worldX;
-        gesturePacket[i].worldY = worldY;
-        gesturePacket[i].worldZ = worldZ;
-        gesturePacket[i].gx = sample.gx;
-        gesturePacket[i].gy = sample.gy;
-        gesturePacket[i].gz = sample.gz;
-        gesturePacket[i].hall1 = sample.hall1;
-        gesturePacket[i].hall2 = sample.hall2;
-
     }
 
 #if DEBUG
@@ -604,20 +595,20 @@ void classifyGesture() {
     if (hallDataIsUsable && rotationEnergy < 4.0f && horizontalEnergy < 1.0f && verticalEnergy < 1.0f) {
         if (startsClosed && endsOpen) {
             Serial.println("zoom in");
-            return;
+            return "ZOOM IN";
         }
         if (startsOpen && endsClosed) {
             Serial.println("zoom out");
-            return;
+            return "ZOOM OUT";
         }
         if (startsClosed && middleOpen && endsClosed) {
             Serial.println("potential zoom out");
-            return;
+            return "POTENTIAL ZOOM OUT";
         }
 
         if (startsOpen && middleClosed && endsOpen) {
             Serial.println("potential zoom in");
-            return;
+            return "POTENTIAL ZOOM IN";
         }
     }
 
@@ -628,33 +619,38 @@ void classifyGesture() {
         if (horizontalEnergy > verticalEnergy) {
             if (minHorizontalTime < maxHorizontalTime) {
                 Serial.println("swipe left");
+                return "SWIPE LEFT";
             } else {
                 Serial.println("swipe right");
+                return "SWIPE RIGHT";
             }
         } else {
             if (minVerticalTime < maxVerticalTime) {
                 Serial.println("swipe down");
+                return "SWIPE DOWN";
             } else {
                 Serial.println("swipe up");
+                return "SWIPE UP";
             }
         }
     } else {
-        //pass to ML model for classification
-        //transmit(worldX, worldY, worldZ, hall1, hall2, GesturePose);
         Serial.println("no gesture detected");
+        return "UNCLASSIFIED";
     }
+
 }
 
-void finishGesture() {
-  if (!gestureActive) return;
+String finishGesture() {
+  if (!gestureActive) return "IDLE";
 
   Serial.print("Gesture: ");
   Serial.print("(samples=");
   Serial.print(sampleCount);
   Serial.println(")");
-  classifyGesture();
+  String classification = classifyGesture();
   gestureActive = false;
   sampleCount = 0;
+  return classification;
 }
 
 void setup() {

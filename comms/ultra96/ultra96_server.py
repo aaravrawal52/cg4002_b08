@@ -256,13 +256,16 @@ while True:
                     )
 
                 else:
-
-                    packets_out_of_order += 1
-
-                    print(
-                        f"[WARNING] Out-of-order "
-                        f"seq={sequence}"
-                    )
+                    # FireBeetle restarted its stream sequence.
+                    if sequence == 0:
+                        print("[STREAM] Sequence counter reset")
+                        expected_sequence = 1
+                        segmenter = GestureSegmenter()
+                    else:
+                        packets_out_of_order += 1
+                        print(
+                            f"[WARNING] Out-of-order seq={sequence}"
+                        )
 
                 # ----------------------------------------
                 # ML INGESTION

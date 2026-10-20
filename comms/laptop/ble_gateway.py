@@ -191,27 +191,7 @@ def handle_stream_packet(message, byte_count):
         # HUMAN-READABLE OUTPUT
         # ----------------------------------------
 
-        if sequence % 50 == 0:
 
-            print()
-            print(
-                f"[GLOVE -> MAC] "
-                f"device={device_id} "
-                f"seq={sequence} "
-                f"tag={tag}"
-            )
-
-            print(
-                f"  accel=({ax:.2f}, {ay:.2f}, {az:.2f})"
-            )
-
-            print(
-                f"  gyro=({gx:.2f}, {gy:.2f}, {gz:.2f})"
-            )
-
-            print(
-                f"  hall=({hall1}, {hall2})"
-            )
 
         if tag == "UNCLASSIFIED":
 
@@ -442,12 +422,7 @@ def notification_handler(characteristic, data):
             "utf-8",
             errors="replace"
         )
-        if message.startswith("DATA,"):
-            print(
-                f"[DEBUG DATA] "
-                f"fields={len(message.split(','))} "
-                f"packet={message}"
-            )
+
 
         # Ignore the periodic FireBeetle DATA stream
         # for this keyboard pipeline test.
@@ -772,10 +747,15 @@ async def ultra96_receiver(reader):
 async def phone_handler(websocket):
     phone_clients.add(websocket)
 
-    print(
-        f"[PHONE] Connected "
-        f"(clients={len(phone_clients)})"
-    )
+    remote = websocket.remote_address
+
+    print()
+    print("========== VISUALIZER CONNECTED ==========")
+    print(f"Client IP:       {remote[0] if remote else 'Unknown'}")
+    print(f"Client Port:     {remote[1] if remote else 'Unknown'}")
+    print(f"Active Clients:  {len(phone_clients)}")
+    print("==========================================")
+    print()
 
     try:
         await websocket.wait_closed()
@@ -783,10 +763,12 @@ async def phone_handler(websocket):
     finally:
         phone_clients.discard(websocket)
 
-        print(
-            f"[PHONE] Disconnected "
-            f"(clients={len(phone_clients)})"
-        )
+        print()
+        print("========== VISUALIZER DISCONNECTED ==========")
+        print(f"Client IP:       {remote[0] if remote else 'Unknown'}")
+        print(f"Active Clients:  {len(phone_clients)}")
+        print("=============================================")
+
 async def phone_sender():
     print(
         "[PHONE] Gesture sender ready"
@@ -870,6 +852,8 @@ async def keyboard_sender(client):
             "SEND> "
         )
         if text.lower() == "s":
+            global last_ble_sequence
+            last_ble_sequence = None
 
             stream_mode = "normal"
 

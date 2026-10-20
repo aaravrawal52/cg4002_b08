@@ -91,6 +91,7 @@ namespace ARVisualizer
         public string Status => status != null ? status.text : "";
         public bool IsBusy => busy || (libraryGrid != null && libraryGrid.IsLoading);
 
+        public TrackedHand OwnerHand { get; private set; }
         bool busy;
         ARVisualizerApp app;
         PhotoLibrary library;
@@ -106,9 +107,10 @@ namespace ARVisualizer
         ScreenMedia preparingVideo;
         ScreenSurface placedChooser;
 
-        public void Initialize(ARVisualizerApp application)
+        public void Initialize(ARVisualizerApp application, TrackedHand ownerHand = TrackedHand.Right)
         {
             app = application;
+            OwnerHand = ownerHand;
             var bridge = new GameObject("Photo library");
             bridge.transform.SetParent(transform, false);
             library = bridge.AddComponent<PhotoLibrary>();
@@ -167,7 +169,7 @@ namespace ARVisualizer
 
         ScreenMedia Media => Target != null ? Target.GetComponent<ScreenMedia>() : null;
 
-        static bool CanLaunchOn(ScreenSurface screen) => screen != null && screen.isActiveAndEnabled
+        bool CanLaunchOn(ScreenSurface screen) => !app.IsScreenUnavailableForMenu(screen, OwnerHand) && screen != null && screen.isActiveAndEnabled
             && !screen.IsAdjusting && screen.GetComponent<ScreenMedia>() != null;
 
         void ClearMedia()
@@ -178,6 +180,7 @@ namespace ARVisualizer
 
         void Launch(ScreenAppEntry entry)
         {
+            using var handScope = app.UseHand(OwnerHand);
             if (!CanLaunchOn(Target)) return;
             SetChooserOpen(false);
             if (entry.id == "photos") OpenPhotos();
@@ -186,6 +189,7 @@ namespace ARVisualizer
 
         public void ObserveRayScreen(ScreenSurface screen)
         {
+            using var handScope = app.UseHand(OwnerHand);
             if (IsModal) return;
             bool changedTarget = false;
             bool wasVisible = launcher.gameObject.activeSelf;
@@ -221,6 +225,12 @@ namespace ARVisualizer
 
         public bool TryOpenChooser(ScreenSurface screen, out string message)
         {
+            using var handScope = app.UseHand(OwnerHand);
+            if (app.MoveModeEnabled)
+            {
+                message = "Confirm or cancel the screen move first";
+                return false;
+            }
             if (!app.PointerReady)
             {
                 message = "Enable the pointer and wait for tracking to choose an app";
@@ -342,6 +352,7 @@ namespace ARVisualizer
 
         public void RefreshPointer()
         {
+            using var handScope = app.UseHand(OwnerHand);
             if (dispatching || app == null) return;
             if (IsModal && (Target == null || !Target.isActiveAndEnabled || Target.IsAdjusting)) Close();
             PositionPanels();
@@ -353,7 +364,7 @@ namespace ARVisualizer
             }
             pointer ??= new PointerEventData(EventSystem.current)
             {
-                pointerId = -102,
+                pointerId = OwnerHand == TrackedHand.Left ? -112 : -102,
                 button = PointerEventData.InputButton.Left
             };
             pointer.position = app.ARCamera.ViewportToScreenPoint(app.PointerViewportPoint);
@@ -415,6 +426,7 @@ namespace ARVisualizer
 
         public bool ActivateButton(Button button, out string message)
         {
+            using var handScope = app.UseHand(OwnerHand);
             if (dispatching || button == null || !button.isActiveAndEnabled || !button.IsInteractable())
             {
                 message = "App-menu button unavailable";
@@ -437,6 +449,7 @@ namespace ARVisualizer
 
         public void OpenPhotos()
         {
+            using var handScope = app.UseHand(OwnerHand);
             if (!CanLaunchOn(Target)) return;
             library.CancelAll();
             ++revision;

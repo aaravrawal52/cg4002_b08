@@ -33,8 +33,9 @@ namespace ARVisualizer.Tests
                 camera.transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(15, 35, roll));
                 camera.aspect = 16f / 9;
                 camera.nearClipPlane = 0.05f;
-                var hand = root.GetComponent<HandPointerSource>();
-                hand.ARCamera = camera;
+                var source = root.GetComponent<HandPointerSource>();
+                source.ARCamera = camera;
+                var hand = source.Right;
                 var knuckle = camera.ViewportToWorldPoint(new Vector3(0.55f, 0.6f, depth));
                 var tip = knuckle + camera.transform.up * 0.07f;
                 hand.SetEditorSample(new Vector2(0.55f, 0.6f), tip, side, knuckle);
@@ -62,8 +63,9 @@ namespace ARVisualizer.Tests
             var root = new GameObject("Hand fallback test", typeof(Camera), typeof(HandPointerSource));
             try
             {
-                var hand = root.GetComponent<HandPointerSource>();
-                hand.ARCamera = root.GetComponent<Camera>();
+                var source = root.GetComponent<HandPointerSource>();
+                source.ARCamera = root.GetComponent<Camera>();
+                var hand = source.Right;
                 hand.SetEditorSample(Vector2.one * 0.5f, null, side);
                 Assert.That(hand.RayOrigin.x, Is.EqualTo(expectedX).Within(0.00001f));
                 Assert.That(hand.RayOrigin.z, Is.EqualTo(0.5f).Within(0.00001f));

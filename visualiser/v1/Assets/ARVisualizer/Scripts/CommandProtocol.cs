@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ARVisualizer
@@ -8,6 +9,7 @@ namespace ARVisualizer
     {
         public string id;
         public string command;
+        public string hand;
         public string token;
     }
 
@@ -16,6 +18,8 @@ namespace ARVisualizer
     {
         public string id;
         public bool ok;
+        public string hand;
+        public HandCommandState leftHand, rightHand;
         public string message;
         public bool pointerEnabled;
         public bool placeModeEnabled;
@@ -29,6 +33,8 @@ namespace ARVisualizer
         public int cubeCount;
         public int screenCount;
         public bool adjustModeEnabled;
+        public bool moveModeEnabled;
+        public int movingScreenId;
         public int pointedScreenId;
         public ScreenInteractionState interaction;
         public ScreenState adjustedScreen;
@@ -56,6 +62,17 @@ namespace ARVisualizer
         { id = screen.Id, widthMetres = screen.Width, heightMetres = screen.Height, thicknessMetres = ScreenSurface.Thickness, canRotate = screen.CanRotate };
     }
 
+    [Serializable]
+    public sealed class HandCommandState
+    {
+        public bool tracked, pointerEnabled, hasTipDepth, placeModeEnabled, moveModeEnabled;
+        public string reportedHand;
+        public bool identityStabilized;
+        public float rootConfidence, sampleAgeSeconds;
+        public int pointedScreenId, adjustedScreenId, movingScreenId;
+        public ScreenInteractionState interaction;
+    }
+
     public static class CommandProtocol
     {
         public const int MaxPacketBytes = 4096;
@@ -75,23 +92,52 @@ namespace ARVisualizer
             catch (ArgumentException) { return false; }
             if (command == null || string.IsNullOrWhiteSpace(command.command)) return false;
             if ((command.id?.Length ?? 0) > 128) { error = "id is limited to 128 characters."; return false; }
-            command.command = command.command.Trim().ToLowerInvariant();
-            switch (command.command)
+            return TryNormalize(command, out error);
+        }
+
+        [Serializable] public sealed class Catalogue { public Entry[] commands; }
+        [Serializable] public sealed class Entry { public string command; public string[] aliases; }
+        static HashSet<string> knownCommands;
+        static HashSet<string> KnownCommands
+        {
+            get
             {
-                case "pointer.on": case "pointer.off":
-                case "goggle.enter": case "goggle.exit": case "ui.click": case "ui.rightclick":
-                case "ui.press": case "ui.release":
-                case "app.choose":
-                case "place.enter": case "place.exit": case "status":
-                case "screen.place": case "screen.undo": case "screens.clear":
-                case "adjust.enter": case "adjust.exit": case "adjust.grow": case "adjust.shrink":
-                case "adjust.rotate.cw": case "adjust.rotate.ccw":
-                    error = null;
-                    return true;
-                default:
-                    error = "Unknown command: " + command.command;
-                    return false;
+                if (knownCommands != null) return knownCommands;
+                var asset = Resources.Load<TextAsset>("commands");
+                if (asset == null) throw new InvalidOperationException("Missing Resources/commands.json");
+                var catalogue = JsonUtility.FromJson<Catalogue>(asset.text);
+                knownCommands = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var entry in catalogue.commands)
+                {
+                    knownCommands.Add(entry.command);
+                    if (entry.aliases != null) foreach (var alias in entry.aliases) knownCommands.Add(alias);
+                }
+                return knownCommands;
             }
+        }
+
+        public static bool TryNormalize(VisualizerCommand command, out string error)
+        {
+            error = "Expected a command.";
+            if (command == null || string.IsNullOrWhiteSpace(command.command)) return false;
+            string name = command.command.Trim().ToLowerInvariant();
+            string hand = command.hand?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrEmpty(hand) && hand != "left" && hand != "right")
+            { error = "hand must be left or right."; return false; }
+            string prefix = name.StartsWith("left.", StringComparison.Ordinal) ? "left"
+                : name.StartsWith("right.", StringComparison.Ordinal) ? "right" : null;
+            if (prefix != null)
+            {
+                if (!string.IsNullOrEmpty(hand) && hand != prefix)
+                { error = "Conflicting hand selectors."; return false; }
+                hand = prefix;
+                name = name.Substring(prefix.Length + 1);
+            }
+            if (!KnownCommands.Contains(name)) { error = "Unknown command: " + name; return false; }
+            command.command = name;
+            command.hand = string.IsNullOrEmpty(hand) ? "right" : hand;
+            error = null;
+            return true;
         }
     }
 }

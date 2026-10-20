@@ -20,6 +20,9 @@ namespace ARVisualizer
         ARVisualizerApp app;
         VisualizerHUD hud;
         ScreenSurface selected;
+        TrackedHand selectedHand;
+        Text settingsLabel;
+        string settingsCaption;
 
         public bool IsOpen => panel != null && panel.activeInHierarchy;
 
@@ -27,6 +30,8 @@ namespace ARVisualizer
         {
             app = application;
             hud = visualizerHUD;
+            settingsLabel = settings.GetComponentInChildren<Text>(true);
+            if (settingsLabel != null) settingsCaption = settingsLabel.text;
             panel.SetActive(false);
             hud.VisibilityChanged += OnVisibilityChanged;
             Refresh();
@@ -45,7 +50,8 @@ namespace ARVisualizer
             leftClick.interactable = rightClick.interactable = app.PointerReady;
             bool canSelectScreen = app.PointerReady && app.PointedScreen != null;
             bool mediaPickerOpen = app.ScreenApps != null && app.ScreenApps.IsModal;
-            settings.interactable = !mediaPickerOpen && (panel.activeSelf || app.AdjustModeEnabled || canSelectScreen);
+            settings.interactable = app.MoveModeEnabled || (!mediaPickerOpen && (panel.activeSelf || app.AdjustModeEnabled || canSelectScreen));
+            if (settingsLabel != null) settingsLabel.text = app.MoveModeEnabled ? "CANCEL MOVE" : settingsCaption;
             RefreshSelection();
         }
 
@@ -64,14 +70,20 @@ namespace ARVisualizer
         public void ToggleSettings()
         {
             if (app == null || app.GoggleModeEnabled) return;
+            if (app.MoveModeEnabled)
+            {
+                app.SendLocal("move.cancel");
+                return;
+            }
             if (panel.activeSelf)
             {
                 Close();
                 return;
             }
-            app.Execute(new VisualizerCommand { command = "adjust.enter" }, reply =>
+            app.Execute(new VisualizerCommand { command = "adjust.enter", hand = app.CurrentHand == TrackedHand.Left ? "left" : "right" }, reply =>
             {
                 if (!reply.ok) return;
+                selectedHand = app.CurrentHand;
                 selected = app.AdjustedScreen;
                 app.ScreenApps?.Close();
                 panel.SetActive(true);
@@ -93,6 +105,13 @@ namespace ARVisualizer
             if (app != null && screen != null) app.DeleteScreen(screen);
         }
 
+        public void MoveScreen()
+        {
+            // Start before closing settings: its selection may differ from the current ray target.
+            if (app == null || !HasValidSelection()) return;
+            app.SendLocal("move.enter");
+        }
+
         public void Grow() => app.SendLocal("adjust.grow");
         public void Shrink() => app.SendLocal("adjust.shrink");
         public void RotateClockwise() => app.SendLocal("adjust.rotate.cw");
@@ -104,7 +123,11 @@ namespace ARVisualizer
             var screen = selected;
             selected = null;
             if (panel != null) panel.SetActive(false);
-            if (app != null && screen != null && app.AdjustedScreen == screen) app.SendLocal("adjust.exit");
+            if (app != null && screen != null)
+            {
+                using var scope = app.UseHand(selectedHand);
+                if (app.AdjustedScreen == screen) app.SendLocal("adjust.exit");
+            }
         }
 
         void OnDisable()

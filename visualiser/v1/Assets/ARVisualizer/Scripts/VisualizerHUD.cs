@@ -72,10 +72,17 @@ namespace ARVisualizer
         [SerializeField] string exitPlaceCaption = "EXIT PLACE";
         [SerializeField] string placeScreenCaption = "PLACE SCREEN";
         [SerializeField] string placeHereCaption = "PLACE HERE";
+        [SerializeField] string moveHereCaption = "MOVE HERE";
+        [SerializeField] string cancelMoveCaption = "CANCEL MOVE";
         [SerializeField] Color placeHereColor = new Color(0.25f, 0.9f, 0.55f);
         [SerializeField] Color placeHereTextColor = new Color(0.035f, 0.055f, 0.075f);
 
+        RectTransform leftAim;
+        GameObject leftCursor;
+        Graphic leftIndicator;
         float refreshAt;
+        Text placeButtonLabel;
+        string placeButtonCaption;
         Graphic placementGraphic;
         Color placementIdleColor, placementIdleTextColor;
         bool placementStyleCaptured;
@@ -121,6 +128,15 @@ namespace ARVisualizer
         public void Initialize(ARVisualizerApp value)
         {
             app = value;
+            if (leftAim == null && aimPosition != null)
+            {
+                leftAim = Instantiate(aimPosition, aimPosition.parent);
+                leftAim.name = "Left Hand Aim Position";
+                leftCursor = leftAim.Find(cursorVisual.transform.name).gameObject;
+                leftIndicator = leftAim.Find(RelativePath(cursorIndicator.transform, aimPosition)).GetComponent<Graphic>();
+            }
+            placeButtonLabel = place != null ? place.GetComponentInChildren<Text>(true) : null;
+            if (placeButtonLabel != null) placeButtonCaption = placeButtonLabel.text;
             refreshAt = 0;
             RefreshStatus();
             GetComponent<NormalScreenControls>()?.Initialize(app, this);
@@ -148,13 +164,18 @@ namespace ARVisualizer
         public void TogglePointer() => Send(app != null && app.Hand != null && app.Hand.PointerEnabled ? "pointer.off" : "pointer.on");
         public void LeftClick() => Send("ui.click");
         public void RightClick() => Send("ui.rightclick");
-        public void TogglePlaceMode() => Send(app != null && app.PlaceModeEnabled ? "place.exit" : "place.enter");
+        public void TogglePlaceMode() => Send(app != null && app.MoveModeEnabled ? "move.cancel"
+            : app != null && app.PlaceModeEnabled ? "place.exit" : "place.enter");
         public void PlacementAction()
         {
             if (IsGoggleMode) TogglePlaceMode();
+            else if (app != null && app.MoveModeEnabled) Send("move.confirm");
             else Send(app != null && app.PlaceModeEnabled ? "screen.place" : "place.enter");
         }
-        public void PlaceScreen() => Send("screen.place");
+        public void PlaceScreen() => Send(app != null && app.MoveModeEnabled ? "move.confirm" : "screen.place");
+        public void EnterMoveMode() => Send("move.enter");
+        public void ConfirmMove() => Send("move.confirm");
+        public void CancelMove() => Send("move.cancel");
         public void UndoScreen() => Send("screen.undo");
         public void ClearScreens() => Send("screens.clear");
         public void EnterAdjustMode() => Send("adjust.enter");
@@ -176,7 +197,8 @@ namespace ARVisualizer
             if (!isActiveAndEnabled || IsGoggleMode) return false;
             foreach (var graphic in GetComponentsInChildren<Graphic>())
             {
-                if (!graphic.isActiveAndEnabled || graphic.color.a <= 0 || (aimPosition != null && graphic.transform.IsChildOf(aimPosition))) continue;
+                if (!graphic.isActiveAndEnabled || graphic.color.a <= 0 || (aimPosition != null && graphic.transform.IsChildOf(aimPosition))
+                    || (leftAim != null && graphic.transform.IsChildOf(leftAim))) continue;
                 if (RectTransformUtility.RectangleContainsScreenPoint(graphic.rectTransform, position, null)) return true;
             }
             return false;
@@ -198,24 +220,43 @@ namespace ARVisualizer
             RefreshStatus();
         }
 
+        static string RelativePath(Transform child, Transform parent)
+        {
+            string path = child.name;
+            while (child.parent != parent) { child = child.parent; path = child.name + "/" + path; }
+            return path;
+        }
+
         void RefreshAim()
         {
+            RefreshHandAim(TrackedHand.Right, aimPosition, cursorVisual, cursorIndicator);
+            RefreshHandAim(TrackedHand.Left, leftAim, leftCursor, leftIndicator);
+        }
+
+        void RefreshHandAim(TrackedHand side, RectTransform position, GameObject visual, Graphic indicator)
+        {
+            if (position == null) return;
+            using var scope = app.UseHand(side);
             bool pointerEnabled = app.Hand.PointerEnabled;
             Vector2 point = pointerEnabled ? app.PointerViewportPoint : Vector2.one * 0.5f;
-            bool visible = pointerEnabled ? app.PointerReady : app.PlaceModeEnabled;
+            bool visible = IsHUDVisible && (pointerEnabled ? app.PointerReady
+                : app.PlaceModeEnabled && (app.Hand.IsTracked || app.UsesCentrePointer));
             if (IsGoggleMode) visible &= app.GoggleHUD.ViewportToPanel(point, out point);
-
-            bool overScreenButton = app.ScreenApps != null && app.ScreenApps.HoveredButton != null;
-            bool overHUDButton = IsGoggleMode && app.GoggleHUD.HoveredButton != null;
-            bool hasTarget = app.HasTarget || app.RayScreen != null || overScreenButton || overHUDButton;
-            SetAim(visible, point, hasTarget);
+            bool hasTarget = app.HasTarget || app.RayScreen != null
+                || (app.ScreenApps != null && app.ScreenApps.HoveredButton != null)
+                || (IsGoggleMode && app.GoggleHUD.HoveredButton != null);
+            visual.SetActive(visible);
+            position.anchorMin = position.anchorMax = point;
+            if (tintAimIndicator) indicator.color = hasTarget ? readyColor : noSurfaceColor;
         }
 
         public void RefreshStatus()
         {
             if (app == null || app.Hand == null || app.Communication == null) return;
             SetText(tracking, app.TrackingStatus);
-            SetText(hand, app.UsesCentrePointer && app.Hand.PointerEnabled ? "Centre pointer / no hand" : app.Hand.Status);
+            SetText(hand, "L " + (app.LeftHand.IsTracked ? "tracked" : "—") + "  /  R "
+                + (app.RightHand.IsTracked ? "tracked" : "—") + "  /  Controls: " + app.CurrentHand
+                + (app.Hands.IsRecognizingHands ? " · identifying" : app.UsesCentrePointer && app.Hand.PointerEnabled ? " · centre" : ""));
             SetText(network, "WI-FI  " + app.Communication.Status + "  /  " + app.Communication.Endpoint);
             RefreshScreenSize();
             ApplyState(app.PlaceModeEnabled, app.Hand.PointerEnabled, app.Hand.IsTracked || app.UsesCentrePointer,
@@ -230,7 +271,8 @@ namespace ARVisualizer
 
         void RefreshScreenSize()
         {
-            var screen = app.AdjustedScreen;
+            var screen = app.MovingScreen;
+            if (screen == null) screen = app.AdjustedScreen;
             if (screen == null) screen = app.InputScreen;
             if (screen == null) screen = app.PointedScreen;
 
@@ -254,6 +296,13 @@ namespace ARVisualizer
 
         void RefreshInteractionStatus()
         {
+            if (app.MoveModeEnabled)
+            {
+                SetText(section, IsGoggleMode ? "GOGGLE / MOVE" : "MOVE SCREEN");
+                SetText(target, "Screen " + app.MovingScreen.Id + " / " + (app.HasTarget ? "ready to move" : "aim at a flat surface"));
+                SetText(detail, "Confirm with Move Here, or Cancel Move to keep its position");
+                return;
+            }
             if (app.AdjustModeEnabled)
             {
                 SetText(section, "ADJUST MODE");
@@ -296,8 +345,12 @@ namespace ARVisualizer
 
         void RefreshPlacementButton(bool placeMode, bool hasTarget, bool placing)
         {
-            SetText(modeLabel, IsGoggleMode ? (placeMode ? exitPlaceCaption : enterPlaceCaption)
-                : (placeMode ? placeHereCaption : placeScreenCaption));
+            bool moving = app != null && app.MoveModeEnabled;
+            string caption = IsGoggleMode ? (placeMode ? exitPlaceCaption : enterPlaceCaption)
+                : (placeMode ? placeHereCaption : placeScreenCaption);
+            if (moving) caption = IsGoggleMode ? cancelMoveCaption : moveHereCaption;
+            SetText(modeLabel, caption);
+            SetText(placeButtonLabel, moving ? moveHereCaption : placeButtonCaption);
             if (modeLabel == null) return;
 
             var button = ParentButton(modeLabel);

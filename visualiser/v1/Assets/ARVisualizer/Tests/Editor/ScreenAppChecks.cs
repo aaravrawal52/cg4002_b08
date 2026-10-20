@@ -37,7 +37,10 @@ namespace ARVisualizer.Tests
         {
             var target = app.ScreenApps.transform.Find(path); Assert.IsNotNull(target, path);
             Aim(app, target);
-            Assert.AreEqual(target.name, app.ScreenApps.TargetName);
+            Assert.AreEqual(target.name, app.ScreenApps.TargetName,
+                $"Menu hit: active={target.gameObject.activeInHierarchy}, depth={target.GetComponent<Graphic>().depth}, " +
+                $"pointerReady={app.PointerReady}, point={app.PointerViewportPoint}, overUI={app.ScreenApps.IsPointerOverUI}, " +
+                $"chooser={app.ScreenApps.IsChooserOpen}, moving={app.MoveModeEnabled}");
             Assert.IsTrue(Send(app, "ui.click").ok, path);
         }
         static CommandReply AimScreen(ARVisualizerApp app, ScreenSurface screen)

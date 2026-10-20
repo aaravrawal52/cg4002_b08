@@ -8,6 +8,7 @@ namespace ARVisualizer
     {
         ARVisualizerApp app;
         bool hasCapturedPress;
+        ScreenMenuInput capturedMenu;
         bool suppressNextClick;
 
         public void Initialize(ARVisualizerApp application) => app = application;
@@ -17,7 +18,8 @@ namespace ARVisualizer
             if (data.button != PointerEventData.InputButton.Left || app == null) return;
 
             app.SendLocal("status");
-            hasCapturedPress = app.ScreenApps.MenuInput.BeginRayPress(out _);
+            capturedMenu = app.ScreenApps.MenuInput;
+            hasCapturedPress = capturedMenu.BeginRayPress(out _);
             suppressNextClick = hasCapturedPress;
         }
 
@@ -26,7 +28,7 @@ namespace ARVisualizer
             if (data.button != PointerEventData.InputButton.Left || !hasCapturedPress) return;
 
             hasCapturedPress = false;
-            app.ScreenApps.MenuInput.EndRayPress(out _);
+            capturedMenu?.EndRayPress(out _);
         }
 
         public void Click()
@@ -43,7 +45,8 @@ namespace ARVisualizer
 
         void OnDisable()
         {
-            if (hasCapturedPress && app != null) app.ScreenApps.MenuInput.CancelPress();
+            if (hasCapturedPress) capturedMenu?.CancelPress();
+            capturedMenu = null;
             hasCapturedPress = false;
             suppressNextClick = false;
         }

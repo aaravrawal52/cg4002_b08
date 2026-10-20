@@ -20,9 +20,9 @@ namespace ARVisualizer
         [Tooltip("Canvas units for the floating 4:3 HUD. Normal-mode geometry is restored on exit.")]
         [SerializeField] Vector2 layoutSize = new Vector2(1280, 960);
         public bool IsActive { get; private set; }
-        public bool IsPointerOverHUD { get; private set; }
-        public Button HoveredButton { get; private set; }
-        public Vector3 PointerWorldPosition { get; private set; }
+        public bool IsPointerOverHUD { get => Pointer.IsPointerOverHUD; private set => Pointer.IsPointerOverHUD = value; }
+        public Button HoveredButton { get => Pointer.HoveredButton; private set => Pointer.HoveredButton = value; }
+        public Vector3 PointerWorldPosition { get => Pointer.PointerWorldPosition; private set => Pointer.PointerWorldPosition = value; }
         public bool IsDispatchingClick { get; private set; }
         public float DistanceMetres => distanceMetres;
         public StereoGoggles Stereo { get; private set; }
@@ -34,7 +34,17 @@ namespace ARVisualizer
         GraphicRaycaster raycaster;
         VisualizerHUD hud;
         RectTransform rect;
-        PointerEventData pointer;
+        sealed class HandHUDPointer
+        {
+            public bool IsPointerOverHUD;
+            public Button HoveredButton;
+            public Vector3 PointerWorldPosition;
+            public PointerEventData Event;
+        }
+        readonly HandHUDPointer leftPointer = new HandHUDPointer(), rightPointer = new HandHUDPointer();
+        HandHUDPointer Pointer => app != null && app.CurrentHand == TrackedHand.Left ? leftPointer : rightPointer;
+        HandHUDPointer OtherPointer => Pointer == leftPointer ? rightPointer : leftPointer;
+        PointerEventData pointer { get => Pointer.Event; set => Pointer.Event = value; }
         readonly List<RaycastResult> hits = new List<RaycastResult>();
         readonly List<GraphicRaycaster> pausedTouchRaycasters = new List<GraphicRaycaster>();
         readonly Dictionary<Graphic, Material> normalMaterials = new Dictionary<Graphic, Material>();
@@ -122,7 +132,7 @@ namespace ARVisualizer
 
         void ExitMode()
         {
-            ClearPointer();
+            ClearAllPointers();
             IsActive = false;
             if (Stereo != null) Stereo.SetMode(false);
             RestoreNormalMaterials();
@@ -260,7 +270,7 @@ namespace ARVisualizer
                 return;
             }
             if (pointer == null)
-                pointer = new PointerEventData(EventSystem.current) { pointerId = -101, button = PointerEventData.InputButton.Left };
+                pointer = new PointerEventData(EventSystem.current) { pointerId = app.CurrentHand == TrackedHand.Left ? -111 : -101, button = PointerEventData.InputButton.Left };
             pointer.position = app.ARCamera.ViewportToScreenPoint(app.Hand.ViewportPoint);
             hits.Clear();
             raycaster.Raycast(pointer, hits);
@@ -289,8 +299,8 @@ namespace ARVisualizer
             if (HoveredButton == next) return;
             var previous = HoveredButton;
             HoveredButton = next;
-            if (previous != null && pointer != null) ExecuteEvents.Execute(previous.gameObject, pointer, ExecuteEvents.pointerExitHandler);
-            if (HoveredButton != null && pointer != null) ExecuteEvents.Execute(HoveredButton.gameObject, pointer, ExecuteEvents.pointerEnterHandler);
+            if (previous != null && previous != OtherPointer.HoveredButton && pointer != null) ExecuteEvents.Execute(previous.gameObject, pointer, ExecuteEvents.pointerExitHandler);
+            if (HoveredButton != null && HoveredButton != OtherPointer.HoveredButton && pointer != null) ExecuteEvents.Execute(HoveredButton.gameObject, pointer, ExecuteEvents.pointerEnterHandler);
         }
 
         public void ClearPointer()
@@ -343,11 +353,17 @@ namespace ARVisualizer
             }
         }
 
-        void OnVisibilityChanged(bool visible) => ClearPointer();
+        void ClearAllPointers()
+        {
+            using (app.UseHand(TrackedHand.Left)) ClearPointer();
+            using (app.UseHand(TrackedHand.Right)) ClearPointer();
+        }
+
+        void OnVisibilityChanged(bool visible) => ClearAllPointers();
 
         void OnApplicationPause(bool paused)
         {
-            if (paused) ClearPointer();
+            if (paused && app != null) ClearAllPointers();
         }
 
         void OnEnable() => Application.onBeforeRender += FollowCameraBeforeRender;

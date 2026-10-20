@@ -6,21 +6,14 @@ import socket
 import sys
 import time
 import uuid
+from command_catalogue import COMMAND_CHOICES, qualify_command
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host", help="iPhone IPv4 address shown in the HUD, or 127.0.0.1 for Editor")
-    parser.add_argument("command", choices=[
-        "pointer.on", "pointer.off", "place.enter", "place.exit",
-        "goggle.enter", "goggle.exit", "ui.click", "ui.rightclick",
-        "ui.press", "ui.release",
-        "app.choose",
-        "screen.place", "screen.undo", "screens.clear",
-        "adjust.enter", "adjust.exit", "adjust.grow", "adjust.shrink",
-        "adjust.rotate.cw", "adjust.rotate.ccw", "status",
-        "cube.place", "cube.undo", "cubes.clear",  # Compatibility aliases.
-    ])
+    parser.add_argument("command", choices=COMMAND_CHOICES)
+    parser.add_argument("--hand", choices=("left", "right"), help="Defaults to right for unprefixed commands")
     parser.add_argument("--port", type=int, default=7777)
     parser.add_argument("--token", default="", help="Match CommunicationManager.sharedToken if configured")
     parser.add_argument("--timeout", type=float, default=3.0)
@@ -28,8 +21,12 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or args.timeout <= 0 or args.attempts < 1:
         parser.error("port must be 1..65535, timeout > 0, and attempts >= 1")
+    try:
+        command = qualify_command(args.command, args.hand)
+    except ValueError as error:
+        parser.error(str(error))
     command_id = uuid.uuid4().hex
-    payload = json.dumps({"id": command_id, "command": args.command, "token": args.token}).encode("utf-8")
+    payload = json.dumps({"id": command_id, "command": command, "token": args.token}).encode("utf-8")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
             client.connect((args.host, args.port))

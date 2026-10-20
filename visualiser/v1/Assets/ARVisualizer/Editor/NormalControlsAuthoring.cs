@@ -30,7 +30,7 @@ namespace ARVisualizer.Editor
         {
             var safe = hud.transform.Find("Safe Area");
             if (safe == null) return;
-            if (safe.Find("Normal Actions") != null) { UpgradePlacementAndSettings(hud); ConfigureHoldButton(hud); return; }
+            if (safe.Find("Normal Actions") != null) { UpgradePlacementAndSettings(hud); ConfigureHoldButton(hud); ConfigureMoveButton(hud); return; }
             var controls = hud.GetComponent<NormalScreenControls>() ?? hud.gameObject.AddComponent<NormalScreenControls>();
             var fields = new SerializedObject(controls);
             void Bind(string name, Object value) => fields.FindProperty(name).objectReferenceValue = value;
@@ -54,6 +54,14 @@ namespace ARVisualizer.Editor
             panel.gameObject.SetActive(false);
             UpgradePlacementAndSettings(hud);
             ConfigureHoldButton(hud);
+            ConfigureMoveButton(hud);
+        }
+
+        static void ConfigureMoveButton(VisualizerHUD hud)
+        {
+            var panel = hud.transform.Find("Safe Area/Normal Actions/Screen Settings Panel");
+            if (panel == null || panel.Find("Move Screen Button") != null) return;
+            Button("Move Screen Button", panel, new Vector2(200, 20), "MOVE SCREEN", hud.GetComponent<NormalScreenControls>().MoveScreen);
         }
 
         static void ConfigureHoldButton(VisualizerHUD hud)

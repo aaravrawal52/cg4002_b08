@@ -2,20 +2,68 @@
 
 Open **Assets/ARVisualizer/Scenes/ARVisualizer.unity** in Unity **6000.6.0f1**. The scene uses a saved HUD and screen prefab, with a runtime AR rig. The iPhone 14 Pro Max supports the LiDAR depth used for fingertip contact. Both landscape orientations are supported.
 
+## Using both hands
+
+The rear camera tracks **left and right hands simultaneously**. Each ray starts at its own index MCP with a **3 cm inward offset in camera space**: left of the right hand, right of the left hand. Both fingertip depth measurements remain separate. The shared Inspector setting is **Hand Pointer Source → Ray offset → Lateral Offset Metres**. Native detection uses a single [Vision hand-pose request](https://developer.apple.com/documentation/vision/vndetecthumanhandposerequest) with a maximum of two observations. Both observations are preserved even if Vision labels both as right hands. A new identity requires three consecutive camera observations with a consistent label; once established, position and motion maintain that identity through brief incorrect or unknown labels. Result order does not determine handedness.
+
+Each hand has its own ray, marker, app menu, placement preview, move selection, adjust selection, and gallery press/drag. Both hands may operate different screens at once. A screen being adjusted, moved, or browsed in the media picker by one hand cannot be acquired by the other. Only one launcher owns a given screen at a time; point away to let its grace period expire before opening it from the other hand. Surface highlights stay visible while either hand is placing. Tracking loss never redirects that hand's commands to the other hand. Normal mode supplies one centre fallback only when **neither** hand is tracked and the brief identity-memory interval has elapsed, for the currently selected controls hand. During recognition or short dropouts, the pointer pauses instead of flashing back to the centre. Goggles require a tracked hand and lock **both** pointers on; exiting restores their individual switches.
+
+**Commands:** prefix any command below with `left.` or `right.`, for example `left.adjust.enter`, `right.move.confirm`, or `left.ui.rightclick`. Hand selection and mouse button are independent: `left.ui.rightclick` is a right-click from the left hand. Unprefixed network commands remain right-hand commands. An alternative JSON form is `{"command":"ui.click","hand":"left"}`; conflicting selectors are rejected. The HUD shows **Controls: Left/Right** and phone buttons act on the hand selected by the last non-status command. Goggle button clicks inherit the hand that clicked them.
+
+Open **[Resources/commands.json](Resources/commands.json)** for the complete grouped catalogue. Each entry contains a description, scope, left packet, right packet and compatibility aliases. Unity validation and both Python senders read this file; add a matching runtime handler when adding a new command. `goggle.enter/exit` affect the shared display; `screens.clear` clears the shared screen collection and both hands' pending placements. `screen.undo` cancels the issuing hand's move/placement first, otherwise removes the shared newest screen.
+
+```json
+{"id":"left-click-001","command":"left.ui.click","token":""}
+```
+
+```sh
+python Tools/send_command.py 192.168.1.42 left.app.choose
+python Tools/send_command.py 192.168.1.42 move.enter --hand right
+python Tools/keyboard_command.py 192.168.1.42 --hand left
+```
+
+The keyboard starts with the requested hand (right by default). **Tab switches hands** and releases a held gallery press on the previous hand. Existing keys then operate the selected hand: **I** pointer, **=** placement, **P** place/confirm move, **F** choose app, **U** click/hold/scroll, **A** adjust, arrows resize/rotate, **M** move, **Enter** confirm, **X** cancel, **H** identify the only visible hand as the selected hand. Display/clear/undo keys keep their shared effects described above.
+
+Replies identify the issuing `hand`; top-level pointer, target, menu and mode fields describe that hand. `leftHand` and `rightHand` provide both tracking/pointer switches, placement/move/adjust selections and independent ray/touch coordinates. Each hand snapshot also includes `reportedHand` (the raw Vision label), `identityStabilized` (the identity tracker corrected that label), `rootConfidence`, and `sampleAgeSeconds`. **Controls: Right** describes the hand selected for phone controls, not the identity of every detected hand. `ScreenSurface.LeftInput`, `RightInput`, `HandInputChanged`, and `HandPointerClicked` expose this to scripts. Existing Inspector interaction events expose a single primary contact, preferring touch over ray and right over left for ties. Use the hand-specific events when an app needs both contacts.
+
+In Editor, the mouse simulates **Editor Hand** on Hand Pointer Source. Automated input can call `app.Hands.Left.SetEditorSample(...)` and `app.Hands.Right.SetEditorSample(...)` together. `ARVisualizerApp.UseHand` is a synchronous dispatch scope; **never keep it across an await**. Anchor requests capture their owner and re-enter that hand's scope only after the await finishes.
+
+### If the left ray changes sides
+
+The **Hand Pointer Source → Hand identity stability** settings control acquisition (3 observations), memory (0.45 seconds), maximum motion (0.18 viewport units), and continuation confidence (0.25). Acquisition and fingertip touches still require **Minimum Confidence** (0.35). Samples older than **Maximum Sample Age** (0.2 seconds) cannot aim or touch. Remembering an identity does not keep a stale ray or fingertip active. Ambiguous overlapping hands pause until they can be associated again; after a longer loss, identity is acquired anew. Backgrounding, changing orientation, or resetting the AR session also resets the associations.
+
+If the initial label is consistently wrong, show **only your left hand** clearly and send:
+
+```json
+{"command":"left.hand.calibrate"}
+```
+
+Or use `python Tools/send_command.py 192.168.1.42 left.hand.calibrate`. In the keyboard sender, select Left with **Tab**, then press **H**. `right.hand.calibrate` works the same way for the right hand. Calibration rejects missing, weak, stale, or multiple visible detections. It resets both identity associations and identifies the only visible hand as requested; the other hand acquires its identity again when it returns. Screens, selected modes and pointer switches are retained. The assignment lasts while tracking remains continuous or within the memory interval; it is not a permanent left/right override.
+
+Keep the whole hand visible, with space between the hands, while first acquiring them. Temporal matching cannot identify a fully hidden hand or guarantee identity after an ambiguous crossing. Test both palm and back-of-hand poses on the iPhone; Editor simulation cannot measure Vision's detection accuracy.
+
 ## Use
 
 1. In normal mode, tap the right-hand **PLACE SCREEN** button (or send `place.enter`), then move the phone slowly to find flat surfaces. The same button becomes green **PLACE HERE**. The highlights use the original sample scene's feathered plane prefab.
-2. Show the **base knuckle of your index finger (MCP)** to the rear camera. The ray follows a point **3 cm to its left for a right hand**, or **3 cm to its right for a left hand**, as seen in the phone's view. In normal mode, the ray automatically moves to the centre when no hand is detected. With the pointer off, placement still uses the centre crosshair.
+2. Show the **base knuckle of your index finger (MCP)** to the rear camera. The ray follows a point **3 cm to its left for a right hand**, or **3 cm to its right for a left hand**, as seen in the phone's view. In normal mode, one ray moves to the centre when neither hand is detected. With the selected pointer off, placement uses the centre crosshair when that hand is tracked or neither hand is visible.
 3. Tap green **PLACE HERE** or send `screen.place`. Confirmation is enabled only when a valid surface is targeted. A black **16 × 9 cm flat rectangle** is anchored to the surface. Placement then exits place mode, returns the button to **PLACE SCREEN**, and opens **Choose app** for the new screen. The pointer is enabled so you can select an app. Failed or cancelled placement leaves the current mode unchanged. Goggles retain their separate **Enter Place / Exit Place** and **Place Screen** controls.
 4. Screens lie flush against their supporting surface. On walls and slopes their width stays level with the horizon. On horizontal surfaces they lie flat and can rotate within the surface plane. Surfaces within 15 degrees of horizontal count as horizontal.
 5. Use `place.exit` to cancel placement without adding a screen. Point the ray at a screen to report face coordinates. Bring the fingertip to its face to report touch coordinates instead.
 6. Point the ray at a screen and send `adjust.enter`. This locks that screen for adjustment and exits place mode. Grow, shrink or rotate it with the commands below, then send `adjust.exit`.
 
-**Normal-mode controls:** **Pointer On / Off** and the single **Place Screen / Place Here** button sit on the right. There is no Undo button in normal mode. **Left Click** and **Right Click** send `ui.click` and `ui.rightclick` to the current ray target. **Screen Settings** locks the pointed screen and opens Choose app, Smaller, Larger, Rotate Left, Rotate Right, **Delete Screen** and Done controls. Delete removes that selected screen, its anchor and its media, even if the ray has moved to another screen. Rotation remains available for horizontal supports only. These buttons and the settings panel are hidden in goggle mode and when the HUD is hidden. Edit their saved shapes and positions under **Landscape HUD / Safe Area / Normal Actions**; the panel is a child of that row. The placement button is **Safe Area / Controls / Mode Button**; captions and confirmation colors are on **Visualizer HUD**.
+**Normal-mode controls:** **Pointer On / Off** and the single **Place Screen / Place Here** button sit on the right. There is no Undo button in normal mode. **Left Click** and **Right Click** send `ui.click` and `ui.rightclick` to the current ray target. **Screen Settings** locks the pointed screen and opens Choose app, Smaller, Larger, Rotate Left, Rotate Right, **Move Screen**, **Delete Screen** and Done controls. Delete removes that selected screen, its anchor and its media, even if the ray has moved to another screen. Rotation remains available for horizontal supports only. These buttons and the settings panel are hidden in goggle mode and when the HUD is hidden. Edit their saved shapes and positions under **Landscape HUD / Safe Area / Normal Actions**; the panel is a child of that row. The placement button is **Safe Area / Controls / Mode Button**; captions and confirmation colors are on **Visualizer HUD**.
 
 Each grow step adds **1.6 cm width**; each shrink step removes the same amount. Height follows the current media's aspect ratio, or **16:9** for a black screen (0.9 cm height per step). Loading media preserves the chosen width and the screen's anchored centre/orientation; a 3:4 portrait photo on a 16 cm wide screen makes it about 21.3 cm tall. The screen remains flat. Default size is 10 steps; the range is 1–100 steps (1.6–160 cm wide). Ray/fingertip bounds and reported coordinates use the current dimensions. Rotation defaults to **5 degrees per command**, adjustable on **AR Visualizer App → Screen interaction**. Rotation is rejected for wall/sloped screens so they stay level.
 
 Adjust mode keeps the same screen selected when the ray moves elsewhere or tracking is lost. Repeating `adjust.enter` keeps the selection; exit and enter again to select another screen. Entering place mode exits adjust mode. Undoing/clearing the selected screen also exits adjust mode. Placement requires place mode and a tracked surface; it is rejected while the ray points at an existing screen. Screens follow their AR anchors but are not saved across app sessions. The default limit is 100 screens.
+
+### Move an existing screen
+
+Point at a screen, open **Screen Settings**, and choose **Move Screen**. Flat surfaces are highlighted and an outline shows the destination using that screen's current dimensions. Aim at the new position and tap green **Move Here**. **Cancel Move** replaces the Screen Settings button while moving. The selected screen stays at its original position until confirmation succeeds; cancellation leaves it there.
+
+Moving preserves the screen's ID, size, photo/video and playback state. It replaces the screen's anchor without making another screen, including when the screen-count limit is reached. Rotation is preserved between horizontal supports; moving to a wall or slope makes the screen level with the new surface. App menus are suspended while moving. Tracking loss prevents confirmation, and changing viewing modes, backgrounding the app, or deleting the selected screen cancels the move. Undo during a move cancels it; it does not delete the screen.
+
+Wi-Fi commands are **`move.enter`**, **`move.confirm`**, and **`move.cancel`**. Enter selects the screen locked in settings/adjust mode, or the currently pointed screen; repeated enter keeps that selection. In goggles, enter by command, then use the floating **Move Here** and **Cancel Move** buttons or send commands. The last surface target is retained while aiming at the confirmation button. `screen.place` also confirms an active move. `status` includes `moveModeEnabled` and `movingScreenId` (zero when not moving).
 
 The square **HUD − / HUD +** button in the top-left safe area hides or shows the status panels, controls and aim marker. The button stays visible and clickable. Hand tracking, the world-space ray, surface highlights, screens and Wi-Fi commands continue working while the HUD is hidden. Showing the HUD restores each panel's previous visibility.
 
@@ -35,7 +83,7 @@ Keep the phone horizontal and leave its **rear camera and LiDAR unobstructed** b
 
 Goggle mode prefers environment depth for the whole scene and falls back to the available depth source. Exiting restores the application's normal occlusion preference. An explicit **No Occlusion** setting is still respected in either mode.
 
-The ray is **locked on** in goggle mode; `pointer.off` is rejected and the pointer button is hidden. The bottom row normally contains **Enter Place** and **Undo**. In place mode it contains **Exit Place**, **Place Screen** and **Undo**. These controls fill the row with equal spacing; adjust **HUD → Controls → Goggle Button Spacing** in the Inspector. Both eye views share one hand-ray target and one button activation. Exiting restores the pointer's previous setting, the normal-mode controls and their authored positions (the separate Place Screen and Undo controls are hidden), camera output, canvas materials, safe-area fitting and normal touch input. Tracking loss clears the hovered button and prevents a stale click. In normal mode, `ui.click` operates the screen app menus; the phone HUD uses touch.
+Both rays are **locked on** in goggle mode; `pointer.off` is rejected and the pointer button is hidden. The bottom row normally contains **Enter Place** and **Undo**. In place mode it contains **Exit Place**, **Place Screen** and **Undo**. These controls fill the row with equal spacing; adjust **HUD → Controls → Goggle Button Spacing** in the Inspector. Both eye views render both rays; each hand produces one activation per click command. Exiting restores each pointer's previous setting, the normal-mode controls and their authored positions (the separate Place Screen and Undo controls are hidden), camera output, canvas materials, safe-area fitting and normal touch input. Tracking loss clears the hovered button and prevents a stale click. In normal mode, `ui.click` operates the screen app menus; the phone HUD uses touch.
 
 The top-left HUD toggle can also be targeted and clicked by command. It stays available when the other panels are hidden. Screen tracking, placement and Wi-Fi continue while the HUD is hidden.
 
@@ -106,7 +154,7 @@ Contacts end when depth/tracking is lost, the finger leaves the face, the app pa
 
 ### How fingertip contact is measured
 
-The ray aims from the camera through the **point beside the index knuckle**; it does not estimate the finger's pointing direction. Vision identifies left versus right hands. LiDAR reconstructs the knuckle's position from the same camera frame, and the lateral offset is applied along the phone camera's horizontal axis. The ray origin, placement target, screen hit coordinates and HUD marker all use that offset point. An unknown hand side uses no lateral offset until identified.
+The ray aims from the camera through the **point beside the index knuckle**; it does not estimate the finger's pointing direction. Vision supplies the initial left/right labels; temporal matching maintains each established identity. LiDAR reconstructs the knuckle's position from the same camera frame, and the lateral offset is applied along the phone camera's horizontal axis. The ray origin, placement target, screen hit coordinates and HUD marker all use that offset point. Device rays appear only after an identity is established, and their offset follows that stable identity.
 
 Edit **Hand Pointer Source → Ray offset → Lateral Offset Metres**, initially **0.03**. When reliable knuckle depth is unavailable, the ray uses **Fallback Root Depth Metres**, initially **0.5 m**; the physical offset is then approximate. This estimate is used only for the ray and never creates fingertip contacts.
 
@@ -120,7 +168,7 @@ In the Editor, the mouse simulates the knuckle. Choose **Hand Pointer Source →
 
 ## Wi-Fi commands
 
-Connect the phone and controller to the same LAN. Send one UTF-8 command per unicast UDP datagram to the address in the HUD, **port 7777** by default. Plain commands and JSON are accepted:
+Connect the phone and controller to the same LAN. Send one UTF-8 command per unicast UDP datagram to the address in the HUD, **port 7777** by default. Plain commands and JSON are accepted. Every command in the table has a `left.` and `right.` variant, listed explicitly in [commands.json](Resources/commands.json). The unprefixed examples retain right-hand compatibility:
 
 ```json
 {"id":"request-001","command":"adjust.grow","token":""}
@@ -129,6 +177,7 @@ Connect the phone and controller to the same LAN. Send one UTF-8 command per uni
 | Command | Effect |
 | --- | --- |
 | `pointer.on` / `pointer.off` | Enable/disable the knuckle ray; touch tracking continues |
+| `hand.calibrate` | Identify the only visible hand as the command's selected side; resets identity associations |
 | `goggle.enter` / `goggle.exit` | Stereo eye views, floating HUD and locked-on ray / normal phone HUD |
 | `ui.click` | Left-click the ray's app-menu control, screen face, or a HUD button in goggle mode |
 | `ui.press` / `ui.release` | Hold/release left click on an app button or media list; move the ray vertically while held to scroll |
@@ -136,6 +185,9 @@ Connect the phone and controller to the same LAN. Send one UTF-8 command per uni
 | `app.choose` | Open the app chooser on the ray-pointed screen, including one already showing media |
 | `place.enter` / `place.exit` | Enter/quit highlighted-surface placement |
 | `screen.place` | Place a flat screen, exit place mode, and open its app chooser |
+| `move.enter` | Select the adjusted/pointed screen and highlight destination surfaces |
+| `move.confirm` | Move the selected screen to the current surface target, preserving its media |
+| `move.cancel` | Cancel relocation and keep the original screen position |
 | `screen.undo` | Remove the newest screen, or cancel pending placement |
 | `screens.clear` | Remove all screens and cancel pending placement |
 | `adjust.enter` / `adjust.exit` | Lock the ray-pointed screen for adjustment / release it |
@@ -204,6 +256,9 @@ The runtime scripts are under **Assets/ARVisualizer/Scripts**. Start with the sc
 | Behavior | Script |
 | --- | --- |
 | Application lifecycle, modes, ray/touch priority and placement targeting | `ARVisualizerApp.cs` |
+| Screen relocation with media and anchor preservation | `ARVisualizerApp.Moving.cs` |
+| Per-hand state and bounded synchronous dispatch | `ARVisualizerApp.Hands.cs`, `HandPointer.cs` |
+| Command catalogue used by Unity and PC senders | `Resources/commands.json`, `Tools/command_catalogue.py` |
 | Wi-Fi/local command routing, placement requests and command replies | `ARVisualizerApp.Commands.cs` |
 | Runtime camera, AR session, tracking origin and pose input setup | `ARSceneRig.cs` |
 | App chooser, popup positioning and media-selection workflow | `ScreenAppMenu.cs` |
@@ -247,6 +302,8 @@ Screen app checks cover compact bottom controls, gallery scrolling in both modes
 
 Phone-input checks send actual Input System touch events for both halves, holding/dragging/releasing, GUI exclusion, disabled/lost tracking, modal back, and switching modes in both directions using the fixed overlay button. Goggle checks also verify the two/three-button bottom row and restore the normal controls' authored geometry on exit. Test the same interactions on iPhone in both landscape orientations before use.
 
-On the iPhone, check both landscape orientations, wall/table placement, knuckle targeting, fingertip contact/release near face edges, hand occlusion, depth loss, adjust commands, and background/resume. Test Photos with full, selected and denied access; portrait photos/videos, iCloud downloads, cancellation, and playing media on multiple screens. For the headset, calibrate lens centres/eye separation and distortion, check fusion at near and far distances, point at every HUD and gallery button, and exit/re-enter goggle mode. Windows Unity tests cannot validate the viewer's optics, compile Apple's native frameworks, access device Photos or establish real fingertip-contact accuracy.
+Move checks cover cancellation, relocation at the screen-count limit, media/video preservation and goggle confirmation. Two-hand checks cover both catalogue variants, malformed/conflicting selectors, native chirality slots and independent expiry, simultaneous contacts, per-hand click/resize/move selection, concurrent anchor creation and reply ownership, and both goggle pointer locks.
+
+On the iPhone, check both hands together and individually, crossing hands, occlusion/loss of one hand, per-hand menu presses, both landscape orientations, wall/table placement, knuckle targeting, fingertip contact/release near face edges, hand occlusion, depth loss, adjust commands, and background/resume. Test Photos with full, selected and denied access; portrait photos/videos, iCloud downloads, cancellation, and playing media on multiple screens. For the headset, calibrate lens centres/eye separation and distortion, check fusion at near and far distances, point at every HUD and gallery button, and exit/re-enter goggle mode. Windows Unity tests cannot validate the viewer's optics, compile Apple's native frameworks, access device Photos or establish real fingertip-contact accuracy.
 
 Implementation references: [Apple index MCP joint](https://developer.apple.com/documentation/vision/vnhumanhandposeobservation/jointname/indexmcp), [hand chirality](https://developer.apple.com/documentation/vision/vnhumanhandposeobservation/chirality), [scene-depth reconstruction](https://developer.apple.com/documentation/arkit/displaying-a-point-cloud-using-scene-depth), and the installed ARKit package's **Includes~/UnityXRNativePtrs.h** for the native session bridge.

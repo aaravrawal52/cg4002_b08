@@ -58,6 +58,7 @@ namespace ARVisualizer
 
         public bool BeginRayPress(out string message)
         {
+            using var scope = app.UseHand(menu.OwnerHand);
             message = "Point at an app button or the media list";
             if (IsRayPressed)
             {
@@ -76,6 +77,7 @@ namespace ARVisualizer
 
         public bool EndRayPress(out string message)
         {
+            using var scope = app.UseHand(menu.OwnerHand);
             message = "Left button released";
             // Phone UI releases can arrive before the app's LateUpdate tracking refresh.
             Refresh();
@@ -90,6 +92,7 @@ namespace ARVisualizer
 
         public void DragFromPhone(Vector2 screenDelta)
         {
+            using var scope = app.UseHand(menu.OwnerHand);
             if (!IsRayPressed || dragViewport == null) return;
             if (!isDraggingFromPhone && Mathf.Abs(screenDelta.y) < PhoneSwipeThresholdPixels) return;
 
@@ -103,6 +106,7 @@ namespace ARVisualizer
         {
             // Activating a button can refresh the menu again before this call finishes.
             if (isRefreshing || app == null) return;
+            using var scope = app.UseHand(menu.OwnerHand);
             isRefreshing = true;
             try
             {
@@ -276,7 +280,7 @@ namespace ARVisualizer
             button = null;
             if (EventSystem.current == null || menu.ActiveCanvas == null) return false;
 
-            pointerEvent ??= new PointerEventData(EventSystem.current) { pointerId = RayPointerId };
+            pointerEvent ??= new PointerEventData(EventSystem.current) { pointerId = RayPointerId - (menu.OwnerHand == TrackedHand.Left ? 1 : 0) };
             pointerEvent.position = app.ARCamera.ViewportToScreenPoint(viewportPoint);
             uiHits.Clear();
             menu.RaycastUI(pointerEvent, uiHits);

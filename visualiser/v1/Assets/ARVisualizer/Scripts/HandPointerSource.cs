@@ -13,10 +13,19 @@ namespace ARVisualizer
     {
         [Header("iPhone hand detection")]
         [SerializeField, Range(5, 30)] float samplesPerSecond = 15;
-        [Tooltip("Minimum confidence for the index knuckle and fingertip.")]
+        [Tooltip("Minimum confidence for acquiring a hand and for fingertip touch.")]
         [SerializeField, Range(0.1f, 1)] float minimumConfidence = 0.35f;
         [Tooltip("Older samples cannot aim or touch a screen.")]
         [SerializeField, Range(0.05f, 0.3f)] float maximumSampleAge = 0.2f;
+        [Header("Hand identity stability")]
+        [Tooltip("A new hand needs this many consecutive camera detections with the same left/right label.")]
+        [SerializeField, Range(2, 8)] int identityAcquisitionFrames = 3;
+        [Tooltip("Remember a hand identity through brief detection gaps. Missing poses cannot click or touch.")]
+        [SerializeField, Range(0.15f, 0.8f)] float identityMemorySeconds = 0.45f;
+        [Tooltip("Maximum motion between detections, in viewport units. Ambiguous overlapping tracks pause rather than change hands.")]
+        [SerializeField, Range(0.05f, 0.35f)] float identityMatchDistance = 0.18f;
+        [Tooltip("An already identified hand can keep aiming at this confidence. Fingertip touches still require Minimum Confidence.")]
+        [SerializeField, Range(0.1f, 1)] float continuingConfidence = 0.25f;
         [Header("Ray offset")]
         [Tooltip("Metres to the left of a right hand, or right of a left hand, in the phone's view.")]
         [SerializeField, Min(0)] float lateralOffsetMetres = 0.03f;
@@ -33,32 +42,20 @@ namespace ARVisualizer
         public Vector2Int ViewportSize => ARCamera != null && ARCamera.targetTexture != null
             ? new Vector2Int(ARCamera.targetTexture.width, ARCamera.targetTexture.height)
             : new Vector2Int(Screen.width, Screen.height);
-        public bool PointerEnabled { get; private set; } = true;
-        public bool PointerLockedOn { get; private set; }
-        public bool IsTracked { get; private set; }
-        public bool IsTipTracked { get; private set; }
-        public bool HasTipDepth { get; private set; }
-        public Vector2 RootViewportPoint { get; private set; } = Vector2.one * 0.5f;
-        public TrackedHand Handedness { get; private set; }
-        public bool HasRootDepth { get; private set; }
-        public Vector3 RootWorldPosition { get; private set; }
         public float LateralOffsetMetres => lateralOffsetMetres;
-        public Vector3 RayOrigin
-        {
-            get
-            {
-                if (ARCamera == null) return RootWorldPosition;
-                var root = HasRootDepth ? RootWorldPosition : ARCamera.ViewportToWorldPoint(
-                    new Vector3(RootViewportPoint.x, RootViewportPoint.y, fallbackRootDepthMetres));
-                float side = Handedness == TrackedHand.Right ? -1 : Handedness == TrackedHand.Left ? 1 : 0;
-                return root + ARCamera.transform.right * (side * lateralOffsetMetres);
-            }
-        }
-        // Every ray hit, placement target and HUD marker uses the same offset viewport point.
-        public Vector2 ViewportPoint => ARCamera != null ? (Vector2)ARCamera.WorldToViewportPoint(RayOrigin) : RootViewportPoint;
-        public Vector2 TipViewportPoint { get; private set; }
-        public Vector3 TipWorldPosition { get; private set; }
-        public string Status { get; private set; } = "Show your index knuckle";
+        internal float FallbackRootDepthMetres => fallbackRootDepthMetres;
+        HandPointer left, right;
+        public HandPointer Left => left ??= new HandPointer(this, TrackedHand.Left);
+        public HandPointer Right => right ??= new HandPointer(this, TrackedHand.Right);
+        public HandPointer GetHand(TrackedHand side) => side == TrackedHand.Left ? Left : Right;
+        readonly HandIdentityTracker identities = new HandIdentityTracker();
+        NativeSample firstObservation, secondObservation;
+        double observationFrame, observationReadTime;
+        double lastObservationTime = double.NegativeInfinity;
+        public int DetectedHandCount { get; private set; }
+        // Avoid a centre-pointer flash during identity acquisition or a short dropout.
+        public bool SuppressCentreFallback => Time.realtimeSinceStartupAsDouble - lastObservationTime < identityMemorySeconds;
+        public bool IsRecognizingHands => DetectedHandCount > 0 && !Left.IsTracked && !Right.IsTracked;
         float nextSample;
         int previousOrientation, previousWidth, previousHeight;
 
@@ -74,41 +71,18 @@ namespace ARVisualizer
         }
 #if UNITY_IOS && !UNITY_EDITOR
         [DllImport("__Internal")] static extern int AVHand_Submit(IntPtr session, int orientation, int width, int height);
-        [DllImport("__Internal")] static extern int AVHand_Read(out NativeSample sample);
+        [DllImport("__Internal")] static extern double AVHand_ReadObservations(out NativeSample first, out NativeSample second);
         [DllImport("__Internal")] static extern void AVHand_Reset();
 #endif
-#if UNITY_EDITOR
-        bool useEditorSample;
-        // Explicit simulation hook for tests or external Editor input. Excluded from device builds.
-        public void SetEditorSample(Vector2 root, Vector3? fingertip, TrackedHand handedness = TrackedHand.Unknown, Vector3? rootWorld = null)
-        {
-            useEditorSample = true;
-            IsTracked = InViewport(root);
-            RootViewportPoint = root;
-            Handedness = handedness;
-            HasRootDepth = rootWorld.HasValue;
-            RootWorldPosition = rootWorld ?? Vector3.zero;
-            IsTipTracked = HasTipDepth = fingertip.HasValue;
-            TipWorldPosition = fingertip ?? Vector3.zero;
-            if (ARCamera != null && fingertip.HasValue) TipViewportPoint = ARCamera.WorldToViewportPoint(fingertip.Value);
-        }
-        public void ClearEditorSample() { useEditorSample = false; ResetTracking(); }
-#endif
-        public void SetPointerEnabled(bool value)
-        {
-            if (PointerLockedOn && !value) return;
-            PointerEnabled = value; ResetTracking();
-        }
-        public void SetPointerLock(bool locked)
-        {
-            PointerLockedOn = locked;
-            if (locked && !PointerEnabled) SetPointerEnabled(true);
-        }
         void ResetTracking()
         {
-            IsTracked = IsTipTracked = HasTipDepth = false;
-            HasRootDepth = false;
-            Handedness = TrackedHand.Unknown;
+            Left.ResetTracking();
+            Right.ResetTracking();
+            identities.Reset();
+            firstObservation = secondObservation = default;
+            observationFrame = 0;
+            DetectedHandCount = 0;
+            lastObservationTime = double.NegativeInfinity;
             nextSample = 0;
 #if UNITY_IOS && !UNITY_EDITOR
             AVHand_Reset();
@@ -116,30 +90,19 @@ namespace ARVisualizer
         }
         void OnDisable() => ResetTracking();
         void OnApplicationPause(bool paused) => ResetTracking();
-        static bool InViewport(Vector2 p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+        internal static bool InViewport(Vector2 p) => float.IsFinite(p.x) && float.IsFinite(p.y)
+            && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+        void SetStatus(string text) { Left.Status = Right.Status = text; }
 
         void Update()
         {
             // Turning off the ray leaves fingertip tracking running for direct touch.
 #if UNITY_EDITOR
-            if (useEditorSample) return;
-            IsTracked = Mouse.current != null;
-            if (IsTracked)
-            {
-                var p = Mouse.current.position.ReadValue();
-                RootViewportPoint = new Vector2(p.x / Screen.width, p.y / Screen.height);
-                IsTracked = InViewport(RootViewportPoint);
-            }
-            Handedness = IsTracked ? editorHand : TrackedHand.Unknown;
-            HasRootDepth = false;
-            TipViewportPoint = RootViewportPoint;
-            IsTipTracked = IsTracked;
-            HasTipDepth = IsTracked && ARCamera != null && Mouse.current.leftButton.isPressed;
-            if (HasTipDepth) TipWorldPosition = ARCamera.ViewportToWorldPoint(new Vector3(RootViewportPoint.x, RootViewportPoint.y, editorTouchDepthMetres));
-            Status = "Editor / " + Handedness + " hand";
+            UpdateEditorHand(Left);
+            UpdateEditorHand(Right);
 #elif UNITY_IOS
             if (ARSession.state != ARSessionState.SessionTracking || Session == null || Session.subsystem == null)
-            { ResetTracking(); Status = "Waiting for AR camera"; return; }
+            { ResetTracking(); SetStatus("Waiting for AR camera"); return; }
             int orientation = Screen.orientation == ScreenOrientation.LandscapeRight ? 4 : 3;
             var viewportSize = ViewportSize;
             if (previousOrientation != orientation || previousWidth != viewportSize.x || previousHeight != viewportSize.y)
@@ -148,40 +111,142 @@ namespace ARVisualizer
             {
                 nextSample = Time.unscaledTime + 1f / samplesPerSecond;
                 if (AVHand_Submit(Session.subsystem.nativePtr, orientation, viewportSize.x, viewportSize.y) < 0)
-                { ResetTracking(); Status = "Hand tracking unavailable"; return; }
+                { ResetTracking(); SetStatus("Hand tracking unavailable"); return; }
             }
-            bool fresh = AVHand_Read(out var sample) == 1 && sample.age >= 0 && sample.age < maximumSampleAge;
-            var root = new Vector2(sample.rootX, sample.rootY);
-            var tip = new Vector2(sample.tipX, sample.tipY);
-            bool rootValid = fresh && sample.rootConfidence >= minimumConfidence && InViewport(root);
-            var handedness = rootValid && sample.handedness == 1 ? TrackedHand.Right
-                : rootValid && sample.handedness == -1 ? TrackedHand.Left : TrackedHand.Unknown;
-            if (rootValid) RootViewportPoint = IsTracked && handedness == Handedness
-                ? Vector2.Lerp(RootViewportPoint, root, 1 - Mathf.Exp(-22 * Time.unscaledDeltaTime)) : root;
-            IsTracked = rootValid;
-            Handedness = handedness;
-            HasRootDepth = rootValid && sample.hasRootDepth != 0;
-            if (HasRootDepth)
-            {
-                var rootSession = new Vector3(sample.rootSessionX, sample.rootSessionY, sample.rootSessionZ);
-                RootWorldPosition = TrackingOrigin != null ? TrackingOrigin.TransformPoint(rootSession) : rootSession;
-                if (ARCamera != null && ARCamera.WorldToViewportPoint(RootWorldPosition).z <= ARCamera.nearClipPlane)
-                    HasRootDepth = false;
-            }
-            IsTipTracked = fresh && sample.tipConfidence >= minimumConfidence && InViewport(tip);
-            TipViewportPoint = tip;
-            HasTipDepth = rootValid && IsTipTracked && sample.hasDepth != 0;
-            if (HasTipDepth)
-            {
-                var sessionPoint = new Vector3(sample.tipSessionX, sample.tipSessionY, sample.tipSessionZ);
-                TipWorldPosition = TrackingOrigin != null ? TrackingOrigin.TransformPoint(sessionPoint) : sessionPoint;
-            }
-            Status = !rootValid ? "Show your index knuckle" : Handedness + " hand / " +
-                (HasTipDepth ? "touch depth" : HasRootDepth ? "knuckle depth" : "estimated ray depth");
+            double frame = AVHand_ReadObservations(out var first, out var second);
+            ApplyObservations(frame, first, second, Time.realtimeSinceStartupAsDouble);
 #else
-            IsTracked = IsTipTracked = HasTipDepth = false;
-            Status = "Hand tracking requires iPhone";
+            ResetTracking();
+            SetStatus("Hand tracking requires iPhone");
 #endif
         }
+
+        void ConfigureIdentityTracking()
+        {
+            identities.AcquisitionFrames = identityAcquisitionFrames;
+            identities.MemorySeconds = identityMemorySeconds;
+            identities.MaximumMovement = identityMatchDistance;
+            identities.AcquisitionConfidence = minimumConfidence;
+            identities.ContinueConfidence = continuingConfidence;
+        }
+
+        HandIdentityTracker.Observation IdentityObservation(NativeSample sample)
+        {
+            bool fresh = sample.age >= 0 && sample.age < maximumSampleAge;
+            return new HandIdentityTracker.Observation(new Vector2(sample.rootX, sample.rootY),
+                sample.handedness == -1 ? TrackedHand.Left : sample.handedness == 1 ? TrackedHand.Right : TrackedHand.Unknown,
+                fresh ? sample.rootConfidence : 0,
+                new Vector3(sample.rootSessionX, sample.rootSessionY, sample.rootSessionZ), fresh && sample.hasRootDepth != 0);
+        }
+
+        void ApplyObservations(double frame, NativeSample first, NativeSample second, double now)
+        {
+            firstObservation = first; secondObservation = second;
+            observationFrame = frame; observationReadTime = now;
+            ConfigureIdentityTracking();
+            var firstIdentity = IdentityObservation(first);
+            var secondIdentity = IdentityObservation(second);
+            bool FirstValid(HandIdentityTracker.Observation value) => value.Confidence >= Mathf.Min(minimumConfidence, continuingConfidence)
+                && InViewport(value.Position);
+            DetectedHandCount = (FirstValid(firstIdentity) ? 1 : 0) + (FirstValid(secondIdentity) ? 1 : 0);
+            double age = Math.Max(first.age, second.age);
+            double capturedAt = double.IsFinite(age) ? now - age : double.NegativeInfinity;
+            if (DetectedHandCount > 0) lastObservationTime = capturedAt;
+            identities.Resolve(frame, capturedAt, now, firstIdentity, secondIdentity, out int leftIndex, out int rightIndex);
+            ApplyIdentifiedSample(Left, leftIndex);
+            ApplyIdentifiedSample(Right, rightIndex);
+        }
+
+        void ApplyIdentifiedSample(HandPointer hand, int index)
+        {
+            var sample = index == 0 ? firstObservation : index == 1 ? secondObservation : default;
+            int reported = sample.handedness;
+            if (index >= 0) sample.handedness = (int)hand.Side;
+            ApplySample(hand, sample);
+            hand.ReportedHand = reported == -1 ? TrackedHand.Left : reported == 1 ? TrackedHand.Right : TrackedHand.Unknown;
+            hand.IdentityStabilized = hand.IsTracked && hand.ReportedHand != hand.Side;
+            if (hand.IdentityStabilized) hand.Status += " / identity stabilized";
+            if (!hand.IsTracked && IsRecognizingHands) hand.Status = "Identifying hands / hold steady briefly";
+        }
+
+        /// <summary>Explicitly identify the only visible hand when Vision's initial label is wrong.</summary>
+        public bool TryCalibrate(TrackedHand side, out string message)
+        {
+            message = "Show only your " + side.ToString().ToLowerInvariant() + " hand clearly, then calibrate again";
+            double now = Time.realtimeSinceStartupAsDouble;
+            var first = firstObservation; var second = secondObservation;
+            first.age += now - observationReadTime; second.age += now - observationReadTime;
+            var a = IdentityObservation(first); var b = IdentityObservation(second);
+            bool Visible(HandIdentityTracker.Observation value) => value.Confidence >= Mathf.Min(minimumConfidence, continuingConfidence)
+                && InViewport(value.Position);
+            bool firstVisible = Visible(a), secondVisible = Visible(b);
+            if (firstVisible == secondVisible || (side != TrackedHand.Left && side != TrackedHand.Right)) return false;
+            int index = firstVisible ? 0 : 1;
+            var observation = firstVisible ? a : b;
+            if (observation.Confidence < minimumConfidence) return false;
+            double capturedAt = now - (firstVisible ? first.age : second.age);
+            ConfigureIdentityTracking();
+            identities.Calibrate(side, index, observationFrame, capturedAt, observation);
+            Left.ResetTracking(); Right.ResetTracking();
+            firstObservation = first; secondObservation = second; observationReadTime = now;
+            ApplyIdentifiedSample(Left, side == TrackedHand.Left ? index : -1);
+            ApplyIdentifiedSample(Right, side == TrackedHand.Right ? index : -1);
+            message = "Visible hand identified as " + side + "; identity is retained while it stays tracked";
+            return true;
+        }
+
+        void ApplySample(HandPointer hand, NativeSample sample)
+        {
+            bool fresh = sample.age >= 0 && sample.age < maximumSampleAge && sample.handedness == (int)hand.Side;
+            var root = new Vector2(sample.rootX, sample.rootY);
+            var tip = new Vector2(sample.tipX, sample.tipY);
+            float rootThreshold = hand.IsTracked ? Mathf.Min(minimumConfidence, continuingConfidence) : minimumConfidence;
+            bool rootValid = fresh && sample.rootConfidence >= rootThreshold && InViewport(root);
+            hand.RootConfidence = sample.rootConfidence;
+            hand.SampleAgeSeconds = double.IsFinite(sample.age) ? (float)sample.age : -1;
+            var handedness = rootValid && sample.handedness == 1 ? TrackedHand.Right
+                : rootValid && sample.handedness == -1 ? TrackedHand.Left : TrackedHand.Unknown;
+            if (rootValid) hand.RootViewportPoint = hand.IsTracked && handedness == hand.Handedness
+                ? Vector2.Lerp(hand.RootViewportPoint, root, 1 - Mathf.Exp(-22 * Time.unscaledDeltaTime)) : root;
+            hand.IsTracked = rootValid;
+            hand.Handedness = handedness;
+            hand.HasRootDepth = rootValid && sample.hasRootDepth != 0;
+            if (hand.HasRootDepth)
+            {
+                var rootSession = new Vector3(sample.rootSessionX, sample.rootSessionY, sample.rootSessionZ);
+                hand.RootWorldPosition = TrackingOrigin != null ? TrackingOrigin.TransformPoint(rootSession) : rootSession;
+                if (ARCamera != null && ARCamera.WorldToViewportPoint(hand.RootWorldPosition).z <= ARCamera.nearClipPlane)
+                    hand.HasRootDepth = false;
+            }
+            hand.IsTipTracked = fresh && sample.tipConfidence >= minimumConfidence && InViewport(tip);
+            hand.TipViewportPoint = tip;
+            hand.HasTipDepth = rootValid && hand.IsTipTracked && sample.hasDepth != 0;
+            if (hand.HasTipDepth)
+            {
+                var sessionPoint = new Vector3(sample.tipSessionX, sample.tipSessionY, sample.tipSessionZ);
+                hand.TipWorldPosition = TrackingOrigin != null ? TrackingOrigin.TransformPoint(sessionPoint) : sessionPoint;
+            }
+            hand.Status = !rootValid ? "Show your index knuckle" : hand.Handedness + " hand / " +
+                (hand.HasTipDepth ? "touch depth" : hand.HasRootDepth ? "knuckle depth" : "estimated ray depth");
+        }
+#if UNITY_EDITOR
+        void UpdateEditorHand(HandPointer hand)
+        {
+            if (hand.UsesEditorSample) return;
+            hand.ResetTracking();
+            // The mouse simulates the selected hand; explicit samples can simulate both.
+            if (hand.Side != editorHand || Mouse.current == null) return;
+            var p = Mouse.current.position.ReadValue();
+            hand.RootViewportPoint = new Vector2(p.x / Screen.width, p.y / Screen.height);
+            hand.IsTracked = InViewport(hand.RootViewportPoint);
+            hand.Handedness = hand.IsTracked ? editorHand : TrackedHand.Unknown;
+            hand.TipViewportPoint = hand.RootViewportPoint;
+            hand.IsTipTracked = hand.IsTracked;
+            hand.HasTipDepth = hand.IsTracked && ARCamera != null && Mouse.current.leftButton.isPressed;
+            if (hand.HasTipDepth) hand.TipWorldPosition = ARCamera.ViewportToWorldPoint(
+                new Vector3(hand.RootViewportPoint.x, hand.RootViewportPoint.y, editorTouchDepthMetres));
+            hand.Status = "Editor / " + hand.Handedness + " hand";
+        }
+#endif
     }
 }

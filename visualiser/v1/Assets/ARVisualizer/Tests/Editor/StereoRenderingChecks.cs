@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -47,6 +48,15 @@ namespace ARVisualizer.Tests
                 graphic.material = app.ScreenApps.transform.Find("Photo library").GetComponent<Image>().material;
             }
             else probe.GetComponent<Renderer>().sharedMaterial = material;
+            // Measure real-world occlusion independently of screens already placed by
+            // earlier checks. Those screens can otherwise cover most of the far probe.
+            var screenRenderers = new List<(Renderer renderer, bool hidden)>();
+            foreach (var screen in app.GetComponentsInChildren<ScreenSurface>(true))
+            foreach (var renderer in screen.GetComponentsInChildren<Renderer>(true))
+            {
+                screenRenderers.Add((renderer, renderer.forceRenderingOff));
+                renderer.forceRenderingOff = true;
+            }
             try
             {
                 canvas.enabled = false;
@@ -70,8 +80,11 @@ namespace ARVisualizer.Tests
                 float hiddenRight = FindProbe(rig.RightEye.targetTexture).z;
                 settings.FindProperty("occlusionPreference").intValue = (int)OcclusionPreferenceMode.NoOcclusion;
                 settings.ApplyModifiedPropertiesWithoutUndo();
-                yield return null;
-                yield return null;
+                // EditMode coroutines can resume several times in one player frame.
+                // Wait for the Inspector change to reach LateUpdate before rendering.
+                deadline = Time.realtimeSinceStartup + 5;
+                while (occlusion.enabled && Time.realtimeSinceStartup < deadline) yield return null;
+                Assert.IsFalse(occlusion.enabled, "The player loop must apply No Occlusion before the probe is rendered");
                 app.ARCamera.Render(); rig.LeftEye.Render(); rig.RightEye.Render();
                 float visibleLeft = FindProbe(rig.LeftEye.targetTexture).z;
                 float visibleRight = FindProbe(rig.RightEye.targetTexture).z;
@@ -83,6 +96,8 @@ namespace ARVisualizer.Tests
             }
             finally
             {
+                foreach (var saved in screenRenderers)
+                    if (saved.renderer != null) saved.renderer.forceRenderingOff = saved.hidden;
                 canvas.enabled = true;
                 settings.Update();
                 settings.FindProperty("occlusionPreference").intValue = originalPreference;

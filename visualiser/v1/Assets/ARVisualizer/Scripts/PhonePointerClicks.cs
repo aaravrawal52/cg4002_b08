@@ -21,6 +21,7 @@ namespace ARVisualizer
         readonly List<RaycastResult> uiHits = new List<RaycastResult>();
         int heldTouchId = NoHeldTouch;
         Vector2 touchStartPosition;
+        ScreenMenuInput heldMenu;
 
         bool CanUsePhonePointer => isActiveAndEnabled && app != null && app.isActiveAndEnabled
             && !app.GoggleModeEnabled && app.Hand.PointerEnabled;
@@ -77,6 +78,7 @@ namespace ARVisualizer
                 && IsLeftHalf(touch.screenPosition) && !IsOverGUI(touch.screenPosition);
             if (canHold && app.ScreenApps.MenuInput.BeginRayPress(out _))
             {
+                heldMenu = app.ScreenApps.MenuInput;
                 heldTouchId = touch.touchId;
                 touchStartPosition = touch.screenPosition;
                 return;
@@ -94,20 +96,19 @@ namespace ARVisualizer
                     break;
                 case TouchPhase.Ended:
                     heldTouchId = NoHeldTouch;
-                    app.ScreenApps.MenuInput.EndRayPress(out _);
+                    heldMenu?.EndRayPress(out _);
+                    heldMenu = null;
                     break;
                 default:
-                    app.ScreenApps.MenuInput.DragFromPhone(touch.screenPosition - touchStartPosition);
+                    heldMenu?.DragFromPhone(touch.screenPosition - touchStartPosition);
                     break;
             }
         }
 
         void CancelHold()
         {
-            if (heldTouchId != NoHeldTouch && app != null && app.ScreenApps != null)
-            {
-                app.ScreenApps.MenuInput.CancelPress();
-            }
+            if (heldTouchId != NoHeldTouch) heldMenu?.CancelPress();
+            heldMenu = null;
             heldTouchId = NoHeldTouch;
         }
 

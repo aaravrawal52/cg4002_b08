@@ -26,7 +26,7 @@ static_assert(sizeof(AVHandSample) == 72 && offsetof(AVHandSample, age) == 40 &&
 static std::mutex avMutex;
 static bool avBusy = false;
 static uint64_t avGeneration = 0;
-static AVHandSample avSample = {};
+static AVHandSample avFirstObservation = {}, avSecondObservation = {};
 static CFTimeInterval avCaptureTime = 0;
 static NSTimeInterval avLastFrameTime = -1;
 
@@ -34,17 +34,21 @@ extern "C" void AVHand_Reset()
 {
     std::lock_guard<std::mutex> lock(avMutex);
     ++avGeneration;
-    avSample = {};
+    avFirstObservation = {};
+    avSecondObservation = {};
     avCaptureTime = 0;
     avLastFrameTime = -1;
 }
 
-extern "C" int AVHand_Read(AVHandSample *sample)
+// Return both observations, even when Vision labels both as the same hand.
+// Unity associates identities over time. The capture stamp prevents duplicate votes.
+extern "C" double AVHand_ReadObservations(AVHandSample *first, AVHandSample *second)
 {
     std::lock_guard<std::mutex> lock(avMutex);
-    *sample = avSample;
-    sample->age = CACurrentMediaTime() - avCaptureTime;
-    return avSample.rootConfidence > 0 || avSample.tipConfidence > 0;
+    *first = avFirstObservation;
+    *second = avSecondObservation;
+    first->age = second->age = CACurrentMediaTime() - avCaptureTime;
+    return avCaptureTime;
 }
 
 // Raw LiDAR from the SAME frame as Vision. Reject holes and inconsistent depth edges;
@@ -121,56 +125,66 @@ extern "C" int AVHand_Submit(void *nativeSession, int orientation, int width, in
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             @autoreleasepool
             {
-                AVHandSample sample = {};
+                AVHandSample observations[2] = {};
+                int observationCount = 0;
                 // Vision reports ordinary failures through NSError / nil results.
                 // Unity's Xcode target disables Objective-C exception handling.
                 VNDetectHumanHandPoseRequest *request = [[VNDetectHumanHandPoseRequest alloc] init];
-                request.maximumHandCount = 1;
+                request.maximumHandCount = 2;
                 VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCVPixelBuffer:frame.capturedImage orientation:kCGImagePropertyOrientationUp options:@{}];
                 NSError *error = nil;
                 if ([handler performRequests:@[request] error:&error] && request.results.count > 0)
                 {
-                    VNHumanHandPoseObservation *hand = request.results.firstObject;
-                    if (@available(iOS 15.0, *))
-                        sample.handedness = hand.chirality == VNChiralityRight ? 1 : hand.chirality == VNChiralityLeft ? -1 : 0;
-                    VNRecognizedPoint *root = [hand recognizedPointForJointName:VNHumanHandPoseObservationJointNameIndexMCP error:&error];
-                    VNRecognizedPoint *tip = [hand recognizedPointForJointName:VNHumanHandPoseObservationJointNameIndexTip error:&error];
-                    CGPoint rootImage = root ? CGPointMake(root.location.x, 1 - root.location.y) : CGPointZero;
-                    CGPoint tipImage = tip ? CGPointMake(tip.location.x, 1 - tip.location.y) : CGPointZero;
-                    if (root && root.confidence > 0)
+                    for (VNHumanHandPoseObservation *hand in request.results)
                     {
-                        CGPoint viewport = CGPointApplyAffineTransform(rootImage, display);
-                        sample.rootX = viewport.x; sample.rootY = 1 - viewport.y; sample.rootConfidence = root.confidence;
-                    }
-                    if (tip && tip.confidence > 0)
-                    {
-                        CGPoint viewport = CGPointApplyAffineTransform(tipImage, display);
-                        sample.tipX = viewport.x; sample.tipY = 1 - viewport.y; sample.tipConfidence = tip.confidence;
-                    }
-                    float tipDepth, rootDepth;
-                    simd_float3 rootCamera = {};
-                    if (sample.rootConfidence > 0 && AVReadDepth(frame.sceneDepth, rootImage, &rootDepth))
-                    {
-                        rootCamera = AVCameraPoint(frame.camera, rootImage, rootDepth);
-                        simd_float4 world = simd_mul(frame.camera.transform, simd_make_float4(rootCamera.x, rootCamera.y, rootCamera.z, 1));
-                        sample.rootSessionX = world.x; sample.rootSessionY = world.y; sample.rootSessionZ = -world.z;
-                        sample.hasRootDepth = 1;
-                    }
-                    if (sample.tipConfidence > 0 && sample.hasRootDepth && AVReadDepth(frame.sceneDepth, tipImage, &tipDepth))
-                    {
-                        simd_float3 tipCamera = AVCameraPoint(frame.camera, tipImage, tipDepth);
-                        // Reject background depth at a fingertip whose base is on a nearer hand.
-                        float fingerLength = simd_distance(tipCamera, rootCamera);
-                        if (fingerLength >= 0.015f && fingerLength <= 0.22f)
+                        if (observationCount >= 2) break;
+                        AVHandSample sample = {};
+                        if (@available(iOS 15.0, *))
+                            sample.handedness = hand.chirality == VNChiralityRight ? 1 : hand.chirality == VNChiralityLeft ? -1 : 0;
+                        VNRecognizedPoint *root = [hand recognizedPointForJointName:VNHumanHandPoseObservationJointNameIndexMCP error:&error];
+                        VNRecognizedPoint *tip = [hand recognizedPointForJointName:VNHumanHandPoseObservationJointNameIndexTip error:&error];
+                        CGPoint rootImage = root ? CGPointMake(root.location.x, 1 - root.location.y) : CGPointZero;
+                        CGPoint tipImage = tip ? CGPointMake(tip.location.x, 1 - tip.location.y) : CGPointZero;
+                        if (root && root.confidence > 0)
                         {
-                            simd_float4 world = simd_mul(frame.camera.transform, simd_make_float4(tipCamera.x, tipCamera.y, tipCamera.z, 1));
-                            sample.tipSessionX = world.x; sample.tipSessionY = world.y; sample.tipSessionZ = -world.z;
-                            sample.hasDepth = 1;
+                            CGPoint viewport = CGPointApplyAffineTransform(rootImage, display);
+                            sample.rootX = viewport.x; sample.rootY = 1 - viewport.y; sample.rootConfidence = root.confidence;
                         }
+                        if (tip && tip.confidence > 0)
+                        {
+                            CGPoint viewport = CGPointApplyAffineTransform(tipImage, display);
+                            sample.tipX = viewport.x; sample.tipY = 1 - viewport.y; sample.tipConfidence = tip.confidence;
+                        }
+                        float tipDepth, rootDepth;
+                        simd_float3 rootCamera = {};
+                        if (sample.rootConfidence > 0 && AVReadDepth(frame.sceneDepth, rootImage, &rootDepth))
+                        {
+                            rootCamera = AVCameraPoint(frame.camera, rootImage, rootDepth);
+                            simd_float4 world = simd_mul(frame.camera.transform, simd_make_float4(rootCamera.x, rootCamera.y, rootCamera.z, 1));
+                            sample.rootSessionX = world.x; sample.rootSessionY = world.y; sample.rootSessionZ = -world.z;
+                            sample.hasRootDepth = 1;
+                        }
+                        if (sample.tipConfidence > 0 && sample.hasRootDepth && AVReadDepth(frame.sceneDepth, tipImage, &tipDepth))
+                        {
+                            simd_float3 tipCamera = AVCameraPoint(frame.camera, tipImage, tipDepth);
+                            // Reject background depth at a fingertip whose base is on a nearer hand.
+                            float fingerLength = simd_distance(tipCamera, rootCamera);
+                            if (fingerLength >= 0.015f && fingerLength <= 0.22f)
+                            {
+                                simd_float4 world = simd_mul(frame.camera.transform, simd_make_float4(tipCamera.x, tipCamera.y, tipCamera.z, 1));
+                                sample.tipSessionX = world.x; sample.tipSessionY = world.y; sample.tipSessionZ = -world.z;
+                                sample.hasDepth = 1;
+                            }
+                        }
+                        observations[observationCount++] = sample;
                     }
                 }
                 std::lock_guard<std::mutex> lock(avMutex);
-                if (generation == avGeneration) { avSample = sample; avCaptureTime = captureTime; }
+                if (generation == avGeneration)
+                {
+                    avFirstObservation = observations[0]; avSecondObservation = observations[1];
+                    avCaptureTime = captureTime;
+                }
                 avBusy = false;
             }
         });

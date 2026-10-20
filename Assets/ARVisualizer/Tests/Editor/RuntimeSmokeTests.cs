@@ -143,7 +143,7 @@ namespace ARVisualizer.Tests
             var hudToggle = hud.GetComponentInChildren<HUDVisibilityToggle>().GetComponent<Button>();
             hudToggle.onClick.Invoke();
             Assert.IsFalse(hud.IsHUDVisible);
-            Assert.IsTrue(hudToggle.isActiveAndEnabled && app.Hand.isActiveAndEnabled && app.Communication.isActiveAndEnabled);
+            Assert.IsTrue(hudToggle.isActiveAndEnabled && app.Hands.isActiveAndEnabled && app.Communication.isActiveAndEnabled);
             ScreenInteractionChecks.Exercise(app, screen);
             Assert.IsFalse(hud.IsHUDVisible, "Hand input and Wi-Fi commands must work while the HUD stays hidden");
             hudToggle.onClick.Invoke();
@@ -214,10 +214,12 @@ namespace ARVisualizer.Tests
             app.SendLocal("place.enter");
             AssertSurfaceVisibility(planeManager, true);
             Assert.AreEqual(1, app.CubeCount);
+            yield return ScreenMoveChecks.Exercise(app, hud, screen);
             yield return NormalControlsChecks.DeleteSelectedScreen(app, hud, screen);
             Assert.AreEqual(0, app.CubeCount);
             app.SendLocal("screens.clear");
             Assert.AreEqual(0, app.CubeCount);
+            yield return DualHandInteractionChecks.Exercise(app);
             // Stopping with the floating HUD active must also clean up safely.
             app.SendLocal("goggle.enter");
             Assert.IsTrue(app.GoggleModeEnabled);

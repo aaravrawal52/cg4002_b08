@@ -7,6 +7,13 @@ namespace ARVisualizer
 {
     public enum ScreenInputKind { None, Ray, Touch }
 
+    public readonly struct ScreenHandInput
+    {
+        public readonly ScreenInputKind Kind;
+        public readonly Vector2 UV;
+        public ScreenHandInput(ScreenInputKind kind, Vector2 uv) { Kind = kind; UV = uv; }
+    }
+
     /// <summary>A flat screen: local X/Y span its face; local -Z points out toward the viewer.</summary>
     [ExecuteAlways, DisallowMultipleComponent]
     [AddComponentMenu("AR Visualizer/Screen Surface")]
@@ -46,6 +53,36 @@ namespace ARVisualizer
         public Vector3 FrontNormal => -transform.forward;
         public event Action<ScreenSurface, ScreenInputKind, Vector2> InputChanged;
         public event Action<ScreenSurface, PointerEventData.InputButton, Vector2> PointerClicked;
+        public ScreenHandInput LeftInput { get; private set; }
+        public ScreenHandInput RightInput { get; private set; }
+        public event Action<ScreenSurface, TrackedHand, ScreenInputKind, Vector2> HandInputChanged;
+        public event Action<ScreenSurface, TrackedHand, PointerEventData.InputButton, Vector2> HandPointerClicked;
+        public ScreenHandInput GetHandInput(TrackedHand hand) => hand == TrackedHand.Left ? LeftInput : RightInput;
+
+        public void SetHandInput(TrackedHand hand, ScreenInputKind kind, Vector2 uv)
+        {
+            if (!isActiveAndEnabled) kind = ScreenInputKind.None;
+            if (kind == ScreenInputKind.None) uv = Vector2.zero;
+            var previous = GetHandInput(hand);
+            if (previous.Kind == kind && (previous.UV - uv).sqrMagnitude < 0.00000001f) return;
+            var input = new ScreenHandInput(kind, uv);
+            if (hand == TrackedHand.Left) LeftInput = input; else RightInput = input;
+            // Existing Inspector events expose a single primary contact. Touch takes
+            // priority; right wins ties. HandInputChanged exposes both without merging.
+            var primary = RightInput.Kind == ScreenInputKind.Touch ? RightInput
+                : LeftInput.Kind == ScreenInputKind.Touch ? LeftInput
+                : RightInput.Kind != ScreenInputKind.None ? RightInput : LeftInput;
+            SetInput(primary.Kind, primary.UV);
+            if (this != null && GetHandInput(hand).Kind == kind) HandInputChanged?.Invoke(this, hand, kind, uv);
+        }
+
+        public bool Click(TrackedHand hand, PointerEventData.InputButton button, Vector2 uv)
+        {
+            if (!Click(button, uv)) return false;
+            if (this != null && isActiveAndEnabled) HandPointerClicked?.Invoke(this, hand, button, uv);
+            return true;
+        }
+
         bool layoutDirty = true;
         ScreenInputKind dispatchedInputKind;
         int inputRevision;
@@ -60,7 +97,12 @@ namespace ARVisualizer
             var up = Vector3.ProjectOnPlane(Vector3.up, transform.forward);
             if (up.sqrMagnitude > 0.001f) transform.rotation = Quaternion.LookRotation(transform.forward, up.normalized);
         }
-        void OnDisable() => SetInput(ScreenInputKind.None, Vector2.zero);
+        void OnDisable()
+        {
+            SetHandInput(TrackedHand.Left, ScreenInputKind.None, Vector2.zero);
+            SetHandInput(TrackedHand.Right, ScreenInputKind.None, Vector2.zero);
+            SetInput(ScreenInputKind.None, Vector2.zero);
+        }
 
         public void Initialize(int id, bool horizontalSupport)
         {
@@ -68,6 +110,8 @@ namespace ARVisualizer
             CanRotate = horizontalSupport;
             ApplyDimensions();
         }
+
+        internal void SetHorizontalSupport(bool horizontalSupport) => CanRotate = horizontalSupport;
 
         public bool Resize(int steps)
         {

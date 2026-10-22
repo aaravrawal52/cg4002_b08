@@ -9,7 +9,7 @@ CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 #   SENSOR,sequence,timestamp,ax,ay,az,gx,gy,gz,hall1,hall2,tag
 # The dummy CSVs use the same names in the same order.
 SENSOR_FIELDS = ["sequence", "timestamp", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
-TAGS = {"IDLE", "ACTIVE", "UNCLASSIFIED"}
+TAGS = {"IDLE", "ACTIVE"}
 
 class States(Enum):
     WAITING = "waiting"
@@ -107,32 +107,31 @@ def segment_windows(data_path, window_size, realtime=True):
 
 class GestureSegmenter:
     '''Acts as state machine. Push-style: feed one row at a time with add_row().'''
-    MAX_SEGMENT = 250 # includes UNCLASSIFIED row
+    MAX_SEGMENT = 250
     PRE_BUFFER = 25
 
     def __init__(self):
         self.cb = CircularBuffer(self.PRE_BUFFER)
         self.active_buffer = []
         self.state = States.WAITING
+        self.prev_tag = "IDLE"
 
     def add_row(self, row):
-        """Process one row. Returns the finished segment (list of rows) when an
-        UNCLASSIFIED row completes one, otherwise None."""
+        """Process one row."""
+        if row["tag"] in TAGS:
+            self.prev_tag = row["tag"]
+        else:
+            row["tag"] = self.prev_tag
         if row["tag"] == "IDLE":
-            if self.state == States.COLLECTING: # firebeetle classified
+            segment = None
+            if self.state == States.COLLECTING:
                 self.cb.clear()
+                segment = self.active_buffer
                 self.active_buffer = []
             self.cb.append(row)
             self.state = States.WAITING
-        
-        elif row["tag"] == "UNCLASSIFIED":
-            segment = None
-            if self.state == States.COLLECTING:
-                self.active_buffer.append(row)
-                segment = self.active_buffer
-            self.state = States.WAITING
-            self.active_buffer = []
             return segment
+        
         else:
             if self.state == States.DISCARDING:
                 return None

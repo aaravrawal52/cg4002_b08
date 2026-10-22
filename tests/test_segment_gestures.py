@@ -1,5 +1,9 @@
 """Tests for data_ingestion.segment_gestures, using dummy_dataset_tagged.
 
+The FireBeetle only sends IDLE / ACTIVE tags; ML classifies every gesture.
+A segment = pre-buffer IDLE rows + ACTIVE rows, and it ends on the first IDLE row
+after the gesture (that IDLE row is not part of the segment).
+
 Run from the repo root with either:
     python -m pytest tests
     python tests/test_segment_gestures.py
@@ -21,8 +25,9 @@ from data_ingestion import (
 )
 
 TAGGED_DIR = ROOT / "dummy_dataset_tagged"
-PRE_BUFFER = 25
-MAX_SEGMENT = 250
+PRE_BUFFER = GestureSegmenter.PRE_BUFFER
+MAX_SEGMENT = GestureSegmenter.MAX_SEGMENT
+MAX_ACTIVE = 225  # firmware cuts a gesture off after this many rows (see generate_tagged_dataset.py)
 
 
 def idx_range(segment):
@@ -44,29 +49,31 @@ def make_rows(spec):
     return rows
 
 
-def expected_segments(labels_path):
-    """(first, last) sequence of the segment each unclassified gesture should produce."""
+def expected_segments(labels_path, n_rows):
+    """(first, last) sequence of the segment each gesture should produce."""
     with open(labels_path, newline="") as f:
         labels = list(csv.DictReader(f))
 
     expected = []
-    prev_gesture_end = 0  # the pre-buffer only holds IDLE rows after the previous gesture
+    prev_active_end = 0  # the pre-buffer only holds IDLE rows after the previous gesture
     for label in labels:
         if label["gesture"] == "idle":
             continue
         start, end = int(label["start_idx"]), int(label["end_idx"])  # half-open [start, end)
-        if label["fw_outcome"] == "unclassified":
-            first = max(start - PRE_BUFFER, prev_gesture_end)
-            last = min(end, start + MAX_SEGMENT - PRE_BUFFER) - 1
-            expected.append((first, last))
-        prev_gesture_end = end
+        active_end = min(end, start + MAX_ACTIVE)
+        first = max(start - PRE_BUFFER, prev_active_end)
+        too_long = active_end - first >= MAX_SEGMENT
+        no_idle_after = active_end >= n_rows  # stream ends mid-gesture
+        if not too_long and not no_idle_after:
+            expected.append((first, active_end - 1))
+        prev_active_end = active_end
     return expected
 
 
 # --- Tagged dataset files ---
 
 def test_unittest_file():
-    # 3 IDLE, 2 ACTIVE, 1 UNCLASSIFIED -> one segment covering sequence 0-5
+    # 3 IDLE, 3 gesture rows, then IDLE -> one segment covering sequence 0-5
     got = run(stream_rows(TAGGED_DIR / "unittest_raw.csv", realtime=False))
     assert got == [(0, 5)], f"got {got}"
 
@@ -74,8 +81,9 @@ def test_unittest_file():
 def test_sessions_match_answer_key():
     failures = []
     for session_dir in sorted((TAGGED_DIR / "sessions").iterdir()):
-        want = expected_segments(session_dir / "sensor_stream_labels.csv")
-        got = run(stream_rows(session_dir / "sensor_stream_raw.csv", realtime=False))
+        rows = list(stream_rows(session_dir / "sensor_stream_raw.csv", realtime=False))
+        want = expected_segments(session_dir / "sensor_stream_labels.csv", len(rows))
+        got = run(rows)
         if len(got) != len(want):
             failures.append(f"{session_dir.name}: {len(got)} segments, expected {len(want)}")
             continue
@@ -93,58 +101,83 @@ def test_only_idle_yields_nothing():
 
 
 def test_full_pre_buffer():
-    # Only the last 25 of the 30 IDLE rows are kept, plus 40 ACTIVE + 1 UNCLASSIFIED
-    got = run(make_rows([("IDLE", 30), ("ACTIVE", 40), ("UNCLASSIFIED", 1)]))
-    assert got == [(5, 70)], f"got {got}"
+    # Only the last 25 of the 30 IDLE rows are kept, plus the 40 ACTIVE rows
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 40), ("IDLE", 1)]))
+    assert got == [(5, 69)], f"got {got}"
 
 
 def test_short_pre_buffer():
-    got = run(make_rows([("IDLE", 10), ("ACTIVE", 5), ("UNCLASSIFIED", 1)]))
-    assert got == [(0, 15)], f"got {got}"
+    got = run(make_rows([("IDLE", 10), ("ACTIVE", 5), ("IDLE", 1)]))
+    assert got == [(0, 14)], f"got {got}"
 
 
-def test_classified_gesture_is_discarded():
-    # ACTIVE -> IDLE means the FireBeetle classified it
-    got = run(make_rows([("IDLE", 30), ("ACTIVE", 20), ("IDLE", 5)]))
-    assert got == [], f"got {got}"
+def test_no_pre_buffer():
+    # Stream starts mid-gesture: segment is just the ACTIVE rows
+    got = run(make_rows([("ACTIVE", 10), ("IDLE", 1)]))
+    assert got == [(0, 9)], f"got {got}"
 
 
-def test_pre_buffer_after_classified_gesture():
-    # The next segment's pre-buffer should only hold the 5 IDLE rows after the classified gesture
-    got = run(make_rows([("IDLE", 30), ("ACTIVE", 10), ("IDLE", 5), ("ACTIVE", 10), ("UNCLASSIFIED", 1)]))
-    assert got == [(40, 55)], f"got {got}"
+def test_ending_idle_row_not_in_segment():
+    segments = list(segment_gestures(make_rows([("IDLE", 30), ("ACTIVE", 40), ("IDLE", 1)])))
+    assert len(segments) == 1, f"got {len(segments)} segments"
+    assert segments[0][-1]["tag"] == "ACTIVE", f"last row tag {segments[0][-1]['tag']}"
 
 
-def test_back_to_back_unclassified():
-    # Second gesture follows immediately, so it has no pre-buffer
-    got = run(make_rows([("IDLE", 30), ("ACTIVE", 10), ("UNCLASSIFIED", 1), ("ACTIVE", 10), ("UNCLASSIFIED", 1)]))
-    assert got == [(5, 40), (41, 51)], f"got {got}"
+def test_one_segment_per_gesture():
+    # Several IDLE rows after a gesture must not return the same segment again
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 10), ("IDLE", 5)]))
+    assert got == [(5, 39)], f"got {got}"
 
 
-def test_unclassified_without_active_yields_nothing():
-    # ACTIVE rows lost in transit: a lone UNCLASSIFIED shouldn't produce a segment
-    got = run(make_rows([("IDLE", 30), ("UNCLASSIFIED", 1)]))
+def test_pre_buffer_after_previous_gesture():
+    # The next segment's pre-buffer starts at the IDLE row that ended the previous one
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 10), ("IDLE", 5), ("ACTIVE", 10), ("IDLE", 1)]))
+    assert got == [(5, 39), (40, 54)], f"got {got}"
+
+
+def test_segments_not_modified_later():
+    # A returned segment must be a fresh list, not the buffer the segmenter keeps appending to
+    segments = list(segment_gestures(make_rows([("IDLE", 30), ("ACTIVE", 10), ("IDLE", 5), ("ACTIVE", 10), ("IDLE", 1)])))
+    got = [idx_range(s) for s in segments]
+    assert got == [(5, 39), (40, 54)], f"got {got}"
+    assert [len(s) for s in segments] == [35, 15], f"got lengths {[len(s) for s in segments]}"
+
+
+def test_gesture_at_end_of_stream_yields_nothing():
+    # No IDLE row arrives, so the gesture never finishes
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 10)]))
     assert got == [], f"got {got}"
 
 
 def test_no_segment_exceeds_max_length():
-    # UNCLASSIFIED never arrives within the firmware limit (e.g. it was lost)
-    # segments = list(segment_gestures(make_rows([("IDLE", 30), ("ACTIVE", 300), ("UNCLASSIFIED", 1)])))
-    got = run(make_rows([("IDLE", 30), ("ACTIVE", 300), ("UNCLASSIFIED", 1)]))
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 300), ("IDLE", 1)]))
     assert got == [], f"got {got}"
 
+
 def test_all_full():
-    got = run(make_rows([("IDLE", 25), ("ACTIVE", 225), ("UNCLASSIFIED", 1)]))
+    # 25 pre-buffer + 225 ACTIVE reaches MAX_SEGMENT -> discarded
+    got = run(make_rows([("IDLE", 25), ("ACTIVE", 225), ("IDLE", 1)]))
     assert got == [], f"got {got}"
+
+
+def test_just_under_max_length():
+    got = run(make_rows([("IDLE", 25), ("ACTIVE", 224), ("IDLE", 1)]))
+    assert got == [(0, 248)], f"got {got}"
+
+
+def test_gesture_after_discarded_one():
+    # The segmenter recovers after a too-long gesture
+    got = run(make_rows([("IDLE", 30), ("ACTIVE", 300), ("IDLE", 5), ("ACTIVE", 10), ("IDLE", 1)]))
+    assert got == [(330, 344)], f"got {got}"
 
 
 def test_add_row_push_style():
-    # How the comms server uses it: one row at a time, a segment only on the UNCLASSIFIED row
+    # How the comms server uses it: one row at a time, a segment only on the first IDLE row after the gesture
     segmenter = GestureSegmenter()
-    rows = make_rows([("IDLE", 30), ("ACTIVE", 40), ("UNCLASSIFIED", 1), ("IDLE", 5)])
+    rows = make_rows([("IDLE", 30), ("ACTIVE", 40), ("IDLE", 5)])
     results = [segmenter.add_row(r) for r in rows]
     finished = [(i, idx_range(s)) for i, s in enumerate(results) if s is not None]
-    assert finished == [(70, (5, 70))], f"got {finished}"
+    assert finished == [(70, (5, 69))], f"got {finished}"
 
 
 # --- Comms packet format ---
@@ -160,18 +193,15 @@ def test_parse_sensor_message():
     assert row["sequence"] == "42" and row["hall2"] == "2110" and row["tag"] == "ACTIVE", f"got {row}"
 
 
-def test_parse_rejects_bad_packets():
-    bad = [
-        "SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110",             # no tag (current comms format)
-        "SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,MOVING",      # unknown tag
-        "DATA,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,IDLE",          # wrong packet type
-    ]
-    for message in bad:
-        try:
-            parse_sensor_message(message)
-        except ValueError:
-            continue
-        raise AssertionError(f"accepted {message!r}")
+def test_corrupted_tags():
+    kept_active = run(make_rows([("IDLE", 30), ("ACTIVE", 10), ("BAD", 1), ("IDLE", 1)]))
+    assert kept_active == [(5,40)], f"got {kept_active}"
+    kept_idle = run(make_rows([("IDLE", 30),("BAD", 5), ("ACTIVE", 10), ("IDLE", 1)]))
+    assert kept_idle == [(10,44)], f"got {kept_idle}"
+    corrupted_first = run(make_rows([("BAD", 5), ("ACTIVE", 10), ("IDLE", 1)]))
+    assert corrupted_first == [(0,14)], f"got {corrupted_first}"
+    no_phantom = run(make_rows([("IDLE", 1), ("BAD", 5), ("IDLE", 10), ]))
+    assert no_phantom == [], f"got {no_phantom}"
 
 
 def test_csv_replayed_as_packets_gives_same_segments():
@@ -190,6 +220,6 @@ if __name__ == "__main__":
             fn()
             print(f"[PASS] {name}")
             passed += 1
-        except AssertionError as e:
-            print(f"[FAIL] {name}: {e}")
+        except Exception as e:
+            print(f"[FAIL] {name}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(tests)} passed")

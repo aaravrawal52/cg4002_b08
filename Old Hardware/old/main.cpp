@@ -400,7 +400,7 @@ float hallChange(int value, float baseline) {
 String classifyGesture() {
     if (sampleCount < 3) {
         Serial.println("no gesture detected");
-        return;
+        return "IDLE";
     }
 
     float horizontalEnergy = 0.0f;
@@ -614,7 +614,7 @@ String classifyGesture() {
 
     if (rotationEnergy > 4.0f ) {
         Serial.println("rotation");
-        return;
+        return "ROTATION";
     } else if ((horizontalEnergy > 1.0f && verticalEnergy < 1.0f) || (verticalEnergy > 1.0f && horizontalEnergy < 1.0f)) {
         if (horizontalEnergy > verticalEnergy) {
             if (minHorizontalTime < maxHorizontalTime) {
@@ -761,36 +761,36 @@ void setup() {
     // Establish the idle Hall values. Keep the hand still during this period.
     Serial.println("Calibrating sensors: keep the hand still for 1 second...");
     for (int i = 0; i < CALIBRATION_SAMPLES; ++i) {
-    unsigned long currentTime = micros();
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    Sample sample = {
-        currentTime, a.acceleration.x, a.acceleration.y, a.acceleration.z,
-        g.gyro.x, g.gyro.y, g.gyro.z,
-        analogRead(HALL_SENSOR_PIN), analogRead(HALL_SENSOR_PIN_2)
-    };
-    getOrientation(sample);
+        unsigned long currentTime = micros();
+        sensors_event_t a, g, temp;
+        mpu.getEvent(&a, &g, &temp);
+        Sample sample = {
+            currentTime, a.acceleration.x, a.acceleration.y, a.acceleration.z,
+            g.gyro.x, g.gyro.y, g.gyro.z,
+            analogRead(HALL_SENSOR_PIN), analogRead(HALL_SENSOR_PIN_2)
+        };
+        getOrientation(sample);
 
-    //Alters the sample values to remove the effect of gravity on the accelerometer readings
-    removeGravity(sample, sample.ax, sample.ay, sample.az);
+        //Alters the sample values to remove the effect of gravity on the accelerometer readings
+        removeGravity(sample, sample.ax, sample.ay, sample.az);
 
-    //Calculate Baselines
-    accelBaselineX += sample.ax;
-    accelBaselineY += sample.ay;
-    accelBaselineZ += sample.az;
-    gyroBaselineX += sample.gx;
-    gyroBaselineY += sample.gy;
-    gyroBaselineZ += sample.gz;
-    hallBaseline1 += sample.hall1;
-    hallBaseline2 += sample.hall2;
+        //Calculate Baselines
+        accelBaselineX += sample.ax;
+        accelBaselineY += sample.ay;
+        accelBaselineZ += sample.az;
+        gyroBaselineX += sample.gx;
+        gyroBaselineY += sample.gy;
+        gyroBaselineZ += sample.gz;
+        hallBaseline1 += sample.hall1;
+        hallBaseline2 += sample.hall2;
 
-    //Populate arrays for  calculation of stationary noise to use for gesture start/end detection thresholds
-    calibrationMotion[i] = sqrtf(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az);
-    calibrationRotation[i] = sqrtf(g.gyro.x * g.gyro.x + g.gyro.y * g.gyro.y + g.gyro.z * g.gyro.z);
-    calibrationHall1[i] = analogRead(HALL_SENSOR_PIN);
-    calibrationHall2[i] = analogRead(HALL_SENSOR_PIN_2);
+        //Populate arrays for  calculation of stationary noise to use for gesture start/end detection thresholds
+        calibrationMotion[i] = sqrtf(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az);
+        calibrationRotation[i] = sqrtf(g.gyro.x * g.gyro.x + g.gyro.y * g.gyro.y + g.gyro.z * g.gyro.z);
+        calibrationHall1[i] = analogRead(HALL_SENSOR_PIN);
+        calibrationHall2[i] = analogRead(HALL_SENSOR_PIN_2);
 
-    delay(10);
+        delay(10);
     }
 
     //Average of the 100 samples

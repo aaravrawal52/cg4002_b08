@@ -6,11 +6,11 @@ __pycache__/
 
 dummy_dataset/
 dummy_dataset_tagged/
+Data/
 preprocessed_data/
 models/
 optuna.db
 best_params.json
-/deploy/sensor_stream_raw.csv
-
+/deploy/crumple_and_toss.csv
 /indiv_subcomponent_submissions
 /dpu_ip

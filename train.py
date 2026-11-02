@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from model import build_model
 
-LABEL_MAP_PATH = "dummy_dataset_tagged/label_map.json"
+LABEL_MAP_PATH = "Data/label_map.json"
 
 def define_model(stats):
     channels = stats["channels"]

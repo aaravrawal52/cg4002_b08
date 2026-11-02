@@ -6,10 +6,10 @@ from enum import Enum
 CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 
 # Fields of a comms SENSOR packet after the "SENSOR" prefix, plus the FireBeetle tag:
-#   SENSOR,sequence,timestamp,ax,ay,az,gx,gy,gz,hall1,hall2,tag
+#   SENSOR,sequence,time,ax,ay,az,gx,gy,gz,hall1,hall2,tag
 # The dummy CSVs use the same names in the same order.
-SENSOR_FIELDS = ["sequence", "timestamp", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
-TAGS = {"IDLE", "ACTIVE", "UNCLASSIFIED"}
+SENSOR_FIELDS = ["sequence", "time", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
+TAGS = {"IDLE", "ACTIVE"}
 
 class States(Enum):
     WAITING = "waiting"
@@ -46,8 +46,8 @@ def parse_sensor_message(message):
     if len(parts) != len(SENSOR_FIELDS) + 1:
         raise ValueError(f"Expected {len(SENSOR_FIELDS) + 1} fields, got {len(parts)}")
     row = dict(zip(SENSOR_FIELDS, parts[1:]))
-    if row["tag"] not in TAGS:
-        raise ValueError(f"Unknown tag: {row['tag']}")
+    # if row["tag"] not in TAGS:
+    #     raise ValueError(f"Unknown tag: {row['tag']}")
     return row
 
 def format_sensor_message(row):
@@ -59,7 +59,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
     simulating the live inference path.
 
     args:
-    - realtime=True: paced to match the timestamp (ms) intervals recorded in the file
+    - realtime=True: paced to match the time (ms) intervals recorded in the file
     """
 
     with open(csv_path, newline="") as file_obj:
@@ -72,7 +72,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
         start_wall = None
         start_t_ms = None
         for row in reader:
-            t_ms = float(row["timestamp"])
+            t_ms = float(row["time"])
 
             if start_wall is None:
                 start_wall = time.monotonic()
@@ -107,24 +107,32 @@ def segment_windows(data_path, window_size, realtime=True):
 
 class GestureSegmenter:
     '''Acts as state machine. Push-style: feed one row at a time with add_row().'''
-    MAX_SEGMENT = 250 # includes UNCLASSIFIED row
+    MAX_SEGMENT = 250
     PRE_BUFFER = 25
 
     def __init__(self):
         self.cb = CircularBuffer(self.PRE_BUFFER)
         self.active_buffer = []
         self.state = States.WAITING
+        self.prev_tag = "IDLE"
 
     def add_row(self, row):
-        """Process one row. Returns the finished segment (list of rows) when an
-        UNCLASSIFIED row completes one, otherwise None."""
+        """Process one row."""
+        if row["tag"] in TAGS:
+            self.prev_tag = row["tag"]
+        else:
+            row["tag"] = self.prev_tag
         if row["tag"] == "IDLE":
-            if self.state == States.COLLECTING: # firebeetle classified
+            segment = None
+            if self.state == States.COLLECTING:
                 self.cb.clear()
+                segment = self.active_buffer
                 self.active_buffer = []
             self.cb.append(row)
             self.state = States.WAITING
-        elif row["tag"] == "ACTIVE":
+            return segment
+        
+        else:
             if self.state == States.DISCARDING:
                 return None
             if self.state == States.WAITING:
@@ -136,14 +144,6 @@ class GestureSegmenter:
                 # discard
                 self.state = States.DISCARDING
                 self.active_buffer = []
-        elif row["tag"] == "UNCLASSIFIED":
-            segment = None
-            if self.state == States.COLLECTING:
-                self.active_buffer.append(row)
-                segment = self.active_buffer
-            self.state = States.WAITING
-            self.active_buffer = []
-            return segment
         return None
 
 def segment_gestures(rows):

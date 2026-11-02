@@ -84,7 +84,7 @@ class GestureClassifier:
 def main():
     """Offline test: replay a tagged CSV through the same segmenter and classifier the server uses."""
     classifier = GestureClassifier()
-    for segment in segment_gestures(stream_rows(DEPLOY_DIR / "sensor_stream_raw.csv", realtime=False)):
+    for segment in segment_gestures(stream_rows(DEPLOY_DIR / "crumple_and_toss_data.csv", realtime=False)):
         gesture, confidence, inference_ms = classifier.classify(segment)
         print(f"inference time: {inference_ms:.2f} ms")
         print("Predicted:", gesture, "(", confidence, ")")

@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from model import build_model
 
-LABEL_MAP_PATH = "dummy_dataset_tagged/label_map.json"
+LABEL_MAP_PATH = "Data/label_map.json"
 
 def define_model(trial):
     n_conv_layers = trial.suggest_int("n_conv_layers", 1, 3)

@@ -7,21 +7,25 @@ import pandas as pd
 from data_ingestion import segment_gestures, stream_rows
 from deploy.resample import resample_segment
 
-CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
+def list_sessions(person_dir):
+    person_dir = Path(person_dir)
+    return sorted(person for person in person_dir.iterdir())
 
-def list_sessions(sessions_dir):
-    sessions_dir = Path(sessions_dir)
-    return sorted(session for session in sessions_dir.iterdir())
+def train_val_test_sessions(DATA_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS):
+    def recordings(people):
+        return [r for person in people for r in list_sessions(Path(DATA_DIR) / person)]
+    people = sorted(p.name for p in Path(DATA_DIR).iterdir() if p.is_dir())
+    train_sessions = people[:TRAIN_SESSIONS]
+    val_sessions = people[TRAIN_SESSIONS:TRAIN_SESSIONS+VAL_SESSIONS]
+    test_sessions = people[TRAIN_SESSIONS+VAL_SESSIONS:]
+    # return train_sessions, val_sessions, test_sessions
+    return recordings(train_sessions), recordings(val_sessions), recordings(test_sessions)
 
-def train_val_test_sessions(SESSIONS_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS):
-    sessions = list_sessions(SESSIONS_DIR)
-    train_sessions = set(sessions[:TRAIN_SESSIONS])
-    val_sessions = set(sessions[TRAIN_SESSIONS:TRAIN_SESSIONS+VAL_SESSIONS])
-    test_sessions = set(sessions[TRAIN_SESSIONS+VAL_SESSIONS:])
-    return train_sessions, val_sessions, test_sessions
+def raw_csv(recording):
+    return next(recording.glob("*_data.csv"))
 
 def fit_zscore_stats(sessions, COLUMNS):
-    combined = pd.concat([pd.read_csv(s / 'sensor_stream_raw.csv') for s in sessions], ignore_index=True)
+    combined = pd.concat([pd.read_csv(raw_csv(s)) for s in sessions], ignore_index=True)
     stats = {c: {"mean": float(np.mean(combined[c])), "std_dev": float(np.std(combined[c]))} for c in COLUMNS}
     with open("zscore_stats.json", "w") as f:
         json.dump(stats, f)
@@ -80,8 +84,8 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     for session in sessions:
         print("mode: ", mode)
         print("session: ", session)
-        instance_label = session/'sensor_stream_labels.csv'
-        instance_raw = session/'sensor_stream_raw.csv'
+        instance_label = Path(session)/'label.csv'
+        instance_raw = raw_csv(session)
         df = pd.read_csv(instance_raw)
         df_label = pd.read_csv(instance_label)
         # Only gestures in the label map count; idle stretches must not fall back to class 0
@@ -110,10 +114,10 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     return X, y
 
 if __name__ == "__main__":
-    SESSIONS_DIR = 'dummy_dataset_tagged/sessions'
-    label_map = 'dummy_dataset_tagged/label_map.json'
+    DATA_DIR = 'Data'
+    label_map = Path(DATA_DIR)/'label_map.json'
     window_size = 50
-    TRAIN_SESSIONS = 2
+    TRAIN_SESSIONS = 5
     VAL_SESSIONS = 1
     TEST_SESSIONS = 1
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
@@ -121,7 +125,7 @@ if __name__ == "__main__":
     with open(label_map, "r") as file:
         action_map = json.load(file)
 
-    train_sessions, val_sessions, test_sessions = train_val_test_sessions(SESSIONS_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS)
+    train_sessions, val_sessions, test_sessions = train_val_test_sessions(DATA_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS)
     fit_zscore_stats(train_sessions, COLUMNS)
     
     X_train, y_train = build_dataset(train_sessions, window_size, COLUMNS, "train")

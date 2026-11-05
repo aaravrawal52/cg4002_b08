@@ -19,8 +19,21 @@ from inference import GestureClassifier
 HOST = "127.0.0.1"
 PORT = 5001
 
-SUPPORTED_PROTOCOL_VERSION = 1
+# Version 2: SENSOR and GESTURE lines carry the device ID.
+SUPPORTED_PROTOCOL_VERSION = 2
 
+
+class GloveSession:
+    """Stream state kept separately for each glove, so that
+    their sequences and gesture segments can't mix."""
+
+    def __init__(self, device_id):
+        self.device_id = device_id
+        self.expected_sequence = None
+        self.segmenter = GestureSegmenter()
+        self.packets_received = 0
+        self.packets_missing = 0
+        self.packets_out_of_order = 0
 
 
 def parse_hello_message(message):
@@ -69,11 +82,9 @@ print(f"[SERVER] Client connected: {addr}")
 # SESSION STATE
 # --------------------------------
 
-session_ready = False
-device_id = None
+# device ID -> GloveSession. Each glove joins with its own HELLO.
+sessions = {}
 
-expected_sequence = None
-segmenter = GestureSegmenter()
 # ============================================================
 # DPU MODEL INITIALIZATION
 # ============================================================
@@ -86,9 +97,6 @@ classifier = GestureClassifier(
 
 print("[ML] DPU model loaded successfully")
 
-packets_received = 0
-packets_missing = 0
-packets_out_of_order = 0
 invalid_packets = 0
 gesture_sequence = 0
 
@@ -124,7 +132,7 @@ while True:
         if message.startswith("HELLO,"):
 
             try:
-                new_device_id, protocol_version = (
+                device_id, protocol_version = (
                     parse_hello_message(message)
                 )
 
@@ -141,18 +149,9 @@ while True:
                     continue
 
 
-                # New communication session
+                # New session for this glove only.
 
-                device_id = new_device_id
-                session_ready = True
-
-                expected_sequence = None
-                segmenter = GestureSegmenter()
-
-                packets_received = 0
-                packets_missing = 0
-                packets_out_of_order = 0
-                invalid_packets = 0
+                sessions[device_id] = GloveSession(device_id)
 
 
                 print()
@@ -194,10 +193,29 @@ while True:
             # SESSION VALIDATION
             # ----------------------------------------
 
-            if not session_ready:
+            # SENSOR,device,sequence,timestamp,...,tag
+
+            packet_fields = message.split(",", 2)
+
+            if len(packet_fields) != 3:
+
+                invalid_packets += 1
 
                 print(
-                    "[SERVER] SENSOR rejected: no active session"
+                    f"[INVALID SENSOR] {message}"
+                )
+
+                continue
+
+            device_id = packet_fields[1]
+
+            session = sessions.get(device_id)
+
+            if session is None:
+
+                print(
+                    f"[SERVER] SENSOR rejected: "
+                    f"no active session for {device_id}"
                 )
 
                 conn.sendall(
@@ -212,7 +230,11 @@ while True:
                 # PARSE USING TEAMMATE'S CODE
                 # ----------------------------------------
 
-                row = parse_sensor_message(message)
+                # The ML parser expects no device field.
+
+                row = parse_sensor_message(
+                    f"SENSOR,{packet_fields[2]}"
+                )
 
                 sequence = int(row["sequence"])
 
@@ -228,61 +250,68 @@ while True:
                         f"Invalid tag: {tag}"
                     )
 
-                packets_received += 1
+                session.packets_received += 1
 
                 # ----------------------------------------
                 # SEQUENCE TRACKING
                 # ----------------------------------------
 
-                if expected_sequence is None:
+                if session.expected_sequence is None:
 
-                    expected_sequence = sequence + 1
+                    session.expected_sequence = sequence + 1
 
-                elif sequence == expected_sequence:
+                elif sequence == session.expected_sequence:
 
-                    expected_sequence += 1
+                    session.expected_sequence += 1
 
-                elif sequence > expected_sequence:
+                elif sequence > session.expected_sequence:
 
-                    missing = sequence - expected_sequence
+                    missing = (
+                        sequence - session.expected_sequence
+                    )
 
-                    packets_missing += missing
+                    session.packets_missing += missing
 
-                    expected_sequence = sequence + 1
+                    session.expected_sequence = sequence + 1
 
                     print(
-                        f"[WARNING] Missing "
+                        f"[WARNING] {device_id} Missing "
                         f"{missing} packet(s)"
                     )
 
                 else:
                     # FireBeetle restarted its stream sequence.
                     if sequence == 0:
-                        print("[STREAM] Sequence counter reset")
-                        expected_sequence = 1
-                        segmenter = GestureSegmenter()
-                    else:
-                        packets_out_of_order += 1
                         print(
-                            f"[WARNING] Out-of-order seq={sequence}"
+                            f"[STREAM] {device_id} "
+                            "Sequence counter reset"
+                        )
+                        session.expected_sequence = 1
+                        session.segmenter = GestureSegmenter()
+                    else:
+                        session.packets_out_of_order += 1
+                        print(
+                            f"[WARNING] {device_id} "
+                            f"Out-of-order seq={sequence}"
                         )
 
                 # ----------------------------------------
                 # ML INGESTION
                 # ----------------------------------------
 
-                segment = segmenter.add_row(row)
+                segment = session.segmenter.add_row(row)
 
                 if tag == "ACTIVE" and sequence % 50 == 0:
 
                     print(
-                        f"[SEGMENT] ACTIVE seq={sequence}"
+                        f"[SEGMENT] {device_id} "
+                        f"ACTIVE seq={sequence}"
                     )
 
                 if tag == "UNCLASSIFIED":
 
                     print(
-                        f"[SEGMENT] UNCLASSIFIED "
+                        f"[SEGMENT] {device_id} UNCLASSIFIED "
                         f"seq={sequence}"
                     )
 
@@ -333,6 +362,7 @@ while True:
 
                         print()
                         print("========== ML PREDICTION ==========")
+                        print(f"Device:        {device_id}")
                         print(f"Gesture:       {gesture}")
                         print(f"Confidence:    {confidence:.4f}")
                         print(f"DPU time:      {inference_ms:.2f} ms")
@@ -341,6 +371,7 @@ while True:
                         # Send the prediction back to the relay Mac.
                         response = (
                             f"GESTURE,"
+                            f"{device_id},"
                             f"{gesture_sequence},"
                             f"{gesture},"
                             f"{confidence}\n"
@@ -349,7 +380,8 @@ while True:
                         conn.sendall(response.encode("utf-8"))
 
                         print(
-                            f"[ML -> MAC] Sent gesture={gesture} "
+                            f"[ML -> MAC] Sent device={device_id} "
+                            f"gesture={gesture} "
                             f"seq={gesture_sequence}"
                         )
 
@@ -369,7 +401,7 @@ while True:
                 # STATISTICS
                 # ----------------------------------------
 
-                if packets_received % 100 == 0:
+                if session.packets_received % 100 == 0:
 
                     print()
                     print(
@@ -377,15 +409,19 @@ while True:
                     )
 
                     print(
-                        f"Received:     {packets_received}"
+                        f"Device:       {device_id}"
                     )
 
                     print(
-                        f"Missing:      {packets_missing}"
+                        f"Received:     {session.packets_received}"
                     )
 
                     print(
-                        f"Out of order: {packets_out_of_order}"
+                        f"Missing:      {session.packets_missing}"
+                    )
+
+                    print(
+                        f"Out of order: {session.packets_out_of_order}"
                     )
 
                     print(
@@ -416,7 +452,9 @@ while True:
 
         if message.startswith("LOCAL_GESTURE,"):
 
-            if not session_ready:
+            parts = message.split(",")
+
+            if len(parts) < 2 or parts[1] not in sessions:
 
                 conn.sendall(
                     b"ERROR,NO_SESSION\n"
@@ -425,8 +463,6 @@ while True:
                 continue
 
             try:
-
-                parts = message.split(",")
 
                 if len(parts) != 5:
 
@@ -471,6 +507,7 @@ while True:
 
                 response = (
                     f"GESTURE,"
+                    f"{event_device},"
                     f"{gesture_sequence},"
                     f"{gesture},"
                     f"1.0\n"

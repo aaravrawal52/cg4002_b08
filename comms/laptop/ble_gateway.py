@@ -9,7 +9,12 @@ import json
 import websockets
 
 
-DEVICE_NAME = "CG4002_GLOVE_01"
+# device ID -> advertised BLE name
+GLOVES = {
+    "GLOVE_01": "CG4002_GLOVE_01",
+    "GLOVE_02": "CG4002_GLOVE_02",
+}
+
 COMMAND_CHAR_UUID = (
     "12345678-1234-1234-1234-1234567890ad"
 )
@@ -23,8 +28,8 @@ ULTRA96_PORT = 5001
 PHONE_WS_HOST = "0.0.0.0"
 PHONE_WS_PORT = 8765
 
-DEVICE_ID = "GLOVE_01"
-PROTOCOL_VERSION = 1
+# Version 2: SENSOR and GESTURE lines carry the device ID.
+PROTOCOL_VERSION = 2
 
 DUMMY_SAMPLES = [
     {
@@ -44,32 +49,49 @@ DUMMY_SAMPLES = [
     },
 ]
 
-command_sequence = 0
-stream_active = False
-stream_packets_since_connect = 0
+
+class GloveState:
+    """Everything that is tracked separately for each glove."""
+
+    def __init__(self, device_id, ble_name):
+        self.device_id = device_id
+        self.ble_name = ble_name
+
+        # Set only while this glove has a BLE connection.
+        self.client = None
+
+        self.command_sequence = 0
+        self.stream_active = False
+        self.stream_packets_since_connect = 0
+        self.stream_packet_received = asyncio.Event()
+        self.last_ble_sequence = None
+
+        self.ble_received = 0
+        self.ble_missing = 0
+        self.ble_bytes_received = 0
+
+
+gloves = {
+    device_id: GloveState(device_id, ble_name)
+    for device_id, ble_name in GLOVES.items()
+}
+
+# Requested by the keyboard and shared by both gloves, so a glove
+# that connects or reconnects later joins the running stream.
 stream_mode = None
-sensor_queue = asyncio.Queue(maxsize=500)
+
+# Both gloves share one queue and one TCP connection to the Ultra96.
+sensor_queue = asyncio.Queue(maxsize=1000)
 gesture_queue = asyncio.Queue(maxsize=50)
 phone_clients = set() #for multiple phones
-stream_packet_received = asyncio.Event()
 
-ble_received = 0
-ble_missing = 0
 queue_dropped = 0
 ultra96_forwarded = 0
-ble_bytes_received = 0
 
-last_ble_sequence = None
 streaming_requested = False
 
-def handle_stream_packet(message, byte_count):
+def handle_stream_packet(glove, message, byte_count):
 
-    global stream_active
-    global stream_packets_since_connect
-    global ble_received
-    global ble_missing
-    global ble_bytes_received
-    global last_ble_sequence
     global queue_dropped
 
     try:
@@ -89,9 +111,10 @@ def handle_stream_packet(message, byte_count):
 
         device_id = parts[1]
 
-        if device_id != DEVICE_ID:
+        if device_id != glove.device_id:
             print(
-                f"[STREAM] Unexpected device: {device_id}"
+                f"[STREAM] Unexpected device: {device_id} "
+                f"on {glove.device_id} connection"
             )
             return
 
@@ -123,49 +146,51 @@ def handle_stream_packet(message, byte_count):
         # SEQUENCE TRACKING
         # ----------------------------------------
 
-        if last_ble_sequence is not None:
+        if glove.last_ble_sequence is not None:
 
-            expected = last_ble_sequence + 1
+            expected = glove.last_ble_sequence + 1
 
             if sequence > expected:
 
                 missing = sequence - expected
-                ble_missing += missing
+                glove.ble_missing += missing
 
                 print(
-                    f"[STREAM] Missing {missing} packet(s)"
+                    f"[STREAM] {glove.device_id} "
+                    f"Missing {missing} packet(s)"
                 )
 
             elif sequence < expected:
 
                 print(
-                    f"[STREAM] Sequence reset/out of order: "
+                    f"[STREAM] {glove.device_id} "
+                    f"Sequence reset/out of order: "
                     f"expected={expected}, received={sequence}"
                 )
 
-        last_ble_sequence = sequence
+        glove.last_ble_sequence = sequence
 
-        ble_received += 1
-        ble_bytes_received += byte_count
+        glove.ble_received += 1
+        glove.ble_bytes_received += byte_count
 
-        stream_active = True
-        stream_packets_since_connect += 1
+        glove.stream_active = True
+        glove.stream_packets_since_connect += 1
 
-        stream_packet_received.set()
+        glove.stream_packet_received.set()
 
         # ----------------------------------------
-        # CONVERT BLE PACKET TO ML FORMAT
+        # CONVERT BLE PACKET TO ULTRA96 FORMAT
         # ----------------------------------------
 
         # Incoming:
         # DATA,GLOVE_01,seq,timestamp,...,tag
         #
         # Outgoing:
-        # SENSOR,seq,timestamp,...,tag
+        # SENSOR,GLOVE_01,seq,timestamp,...,tag
 
         tcp_message = (
             "SENSOR,"
-            + ",".join(parts[2:])
+            + ",".join(parts[1:])
             + "\n"
         )
 
@@ -182,7 +207,8 @@ def handle_stream_packet(message, byte_count):
             queue_dropped += 1
 
             print(
-                f"[QUEUE] FULL - dropped seq={sequence}"
+                f"[QUEUE] FULL - dropped "
+                f"{glove.device_id} seq={sequence}"
             )
 
             return
@@ -197,6 +223,7 @@ def handle_stream_packet(message, byte_count):
 
             print(
                 f"[GESTURE] UNCLASSIFIED "
+                f"{glove.device_id} "
                 f"seq={sequence} forwarded to Ultra96"
             )
 
@@ -206,10 +233,11 @@ def handle_stream_packet(message, byte_count):
             f"[STREAM] Parse error: {error}"
         )
 async def stream_monitor():
-    global stream_active
-    global stream_packets_since_connect
 
-    previous_count = 0
+    previous_counts = {
+        device_id: 0
+        for device_id in gloves
+    }
 
     while True:
         await asyncio.sleep(2)
@@ -217,34 +245,47 @@ async def stream_monitor():
         if stream_mode is None:
             continue
 
-        current_count = stream_packets_since_connect
+        for glove in gloves.values():
 
-        packets_last_2s = (
-            current_count - previous_count
-        )
-
-        rate = packets_last_2s / 2.0
-
-        previous_count = current_count
-
-        if packets_last_2s > 0:
-
-            print(
-                f"\n[STREAM] LIVE ✓ "
-                f"rate={rate:.1f} Hz "
-                f"session_packets={current_count}"
+            current_count = (
+                glove.stream_packets_since_connect
             )
 
-        else:
-
-            print(
-                "\n[STREAM] WARNING: "
-                "no packets received in last 2 seconds"
+            # The counter restarts on each new BLE connection.
+            packets_last_2s = max(
+                current_count
+                - previous_counts[glove.device_id],
+                0
             )
 
+            rate = packets_last_2s / 2.0
 
-async def restore_stream(client):
-    global stream_mode
+            previous_counts[glove.device_id] = (
+                current_count
+            )
+
+            # A glove that is not connected has its own
+            # scanning messages, so don't warn about it here.
+            if glove.client is None:
+                continue
+
+            if packets_last_2s > 0:
+
+                print(
+                    f"\n[STREAM] {glove.device_id} LIVE ✓ "
+                    f"rate={rate:.1f} Hz "
+                    f"session_packets={current_count}"
+                )
+
+            else:
+
+                print(
+                    f"\n[STREAM] {glove.device_id} WARNING: "
+                    "no packets received in last 2 seconds"
+                )
+
+
+async def restore_stream(glove, client):
 
     if stream_mode is None:
         return
@@ -255,12 +296,13 @@ async def restore_stream(client):
         else b"CONTROL,MAX_STREAM"
     )
 
-    stream_packet_received.clear()
+    glove.stream_packet_received.clear()
 
     while client.is_connected:
 
         print(
-            f"[BLE] Restoring {stream_mode} stream..."
+            f"[BLE] {glove.device_id} "
+            f"Restoring {stream_mode} stream..."
         )
 
         try:
@@ -270,13 +312,14 @@ async def restore_stream(client):
                 response=True
             )
             await asyncio.wait_for(
-                stream_packet_received.wait(),
+                glove.stream_packet_received.wait(),
                 timeout=2.0
             )
 
         except Exception as error:
             print(
-                f"[BLE] Restore write failed: {error}"
+                f"[BLE] {glove.device_id} "
+                f"Restore write failed: {error}"
             )
             return
 
@@ -284,19 +327,21 @@ async def restore_stream(client):
         # Wait for proof: an actual stream notification.
         try:
             await asyncio.wait_for(
-                stream_packet_received.wait(),
+                glove.stream_packet_received.wait(),
                 timeout=2.0
             )
 
             print(
-                "[BLE] Stream successfully resumed"
+                f"[BLE] {glove.device_id} "
+                "Stream successfully resumed"
             )
 
             return
 
         except asyncio.TimeoutError:
             print(
-                "[BLE] No stream packets received - "
+                f"[BLE] {glove.device_id} "
+                "No stream packets received - "
                 "retrying START_STREAM..."
             )
 
@@ -322,7 +367,7 @@ def parse_ble_message(data):
         "timestamp": int(parts[2]),
     }
 
-def handle_local_gesture(message):
+def handle_local_gesture(glove, message):
 
     global queue_dropped
 
@@ -370,8 +415,11 @@ def handle_local_gesture(message):
 
     device_id = parts[1]
 
-    if device_id != DEVICE_ID:
-        print("[GESTURE] Unexpected device")
+    if device_id != glove.device_id:
+        print(
+            f"[GESTURE] Unexpected device: {device_id} "
+            f"on {glove.device_id} connection"
+        )
         return
 
     try:
@@ -413,8 +461,15 @@ def handle_local_gesture(message):
         f"gesture={gesture}"
     )
 
-def notification_handler(characteristic, data):
-    global ble_received
+def make_notification_handler(glove):
+
+    def handler(characteristic, data):
+        notification_handler(glove, data)
+
+    return handler
+
+
+def notification_handler(glove, data):
     global queue_dropped
 
     try:
@@ -433,6 +488,7 @@ def notification_handler(characteristic, data):
         if message.startswith("DATA,"):
 
             handle_stream_packet(
+                glove,
                 message,
                 len(data)
             )
@@ -440,7 +496,7 @@ def notification_handler(characteristic, data):
             return
         if message.startswith("LOCAL_GESTURE,"):
 
-            handle_local_gesture(message)
+            handle_local_gesture(glove, message)
 
             return
 
@@ -540,7 +596,7 @@ def notification_handler(characteristic, data):
             "hall2": int(parts[12]),
         }
 
-        ble_received += 1
+        glove.ble_received += 1
 
         print(
             f"[GLOVE -> MAC] "
@@ -590,6 +646,7 @@ async def ultra96_sender(writer):
 
                 message = (
                     f"SENSOR,"
+                    f"{sample['device_id']},"
                     f"{sample['sequence']},"
                     f"{sample['timestamp']},"
                     f"{sample['ax']},"
@@ -617,37 +674,70 @@ async def ultra96_sender(writer):
 
 
 async def stats_task():
-    previous_bytes = 0
-    previous_received = 0
+    previous_bytes = {
+        device_id: 0
+        for device_id in gloves
+    }
+    previous_received = {
+        device_id: 0
+        for device_id in gloves
+    }
     previous_forwarded = 0
 
     while True:
         await asyncio.sleep(5)
 
-        current_received = ble_received
-        current_bytes = ble_bytes_received
+        print()
+        print("========== GATEWAY STATS ==========")
 
-        bytes_last_5s = (
-            current_bytes - previous_bytes
-        )
+        for glove in gloves.values():
 
-        kbps = (
-            bytes_last_5s
-            * 8
-            / 5
-            / 1000
-        )
+            device_id = glove.device_id
 
-        previous_bytes = current_bytes
+            bytes_last_5s = (
+                glove.ble_bytes_received
+                - previous_bytes[device_id]
+            )
 
-        received_last_5s = (
-            current_received
-            - previous_received
-        )
+            kbps = (
+                bytes_last_5s
+                * 8
+                / 5
+                / 1000
+            )
 
-        rate = received_last_5s / 5
+            previous_bytes[device_id] = (
+                glove.ble_bytes_received
+            )
 
-        previous_received = current_received
+            received_last_5s = (
+                glove.ble_received
+                - previous_received[device_id]
+            )
+
+            rate = received_last_5s / 5
+
+            previous_received[device_id] = (
+                glove.ble_received
+            )
+
+            print(
+                f"{device_id} "
+                f"connected={glove.client is not None}"
+            )
+            print(
+                f"  BLE received:   {glove.ble_received}"
+            )
+            print(
+                f"  BLE missing:    {glove.ble_missing}"
+            )
+            print(
+                f"  BLE rate:       {rate:.1f} Hz"
+            )
+            print(
+                f"  BLE throughput: {kbps:.2f} kbps"
+            )
+
         current_forwarded = ultra96_forwarded
 
         forwarded_last_5s = (
@@ -661,14 +751,6 @@ async def stats_task():
 
         previous_forwarded = current_forwarded
 
-        print()
-        print("========== GATEWAY STATS ==========")
-        print(
-            f"BLE received:    {ble_received}"
-        )
-        print(
-            f"BLE missing:     {ble_missing}"
-        )
         print(
             f"Queue size:      {sensor_queue.qsize()}"
         )
@@ -676,13 +758,7 @@ async def stats_task():
             f"Queue dropped:   {queue_dropped}"
         )
         print(
-            f"BLE rate:        {rate:.1f} Hz"
-        )
-        print(
             f"Forward rate:    {forward_rate:.1f} Hz"
-        )
-        print(
-            f"BLE throughput:  {kbps:.2f} kbps"
         )
         print("===================================")
         print()
@@ -705,14 +781,15 @@ async def ultra96_receiver(reader):
         parts = message.split(",")
 
         if (
-            len(parts) == 4
+            len(parts) == 5
             and parts[0] == "GESTURE"
         ):
             try:
                 gesture = {
-                    "sequence": int(parts[1]),
-                    "gesture": parts[2],
-                    "confidence": float(parts[3]),
+                    "device": parts[1],
+                    "sequence": int(parts[2]),
+                    "gesture": parts[3],
+                    "confidence": float(parts[4]),
                 }
 
             except ValueError:
@@ -724,6 +801,7 @@ async def ultra96_receiver(reader):
 
             print(
                 f"[RECEIVER] Gesture received: "
+                f"device={gesture['device']} "
                 f"seq={gesture['sequence']} "
                 f"gesture={gesture['gesture']} "
                 f"confidence={gesture['confidence']}"
@@ -779,6 +857,7 @@ async def phone_sender():
 
         message = {
             "type": "GESTURE",
+            "device": gesture["device"],
             "sequence": gesture["sequence"],
             "gesture": gesture["gesture"],
             "confidence": gesture["confidence"],
@@ -816,6 +895,7 @@ async def phone_sender():
 
         print(
             f"[PHONE] Sent "
+            f"device={gesture['device']} "
             f"seq={gesture['sequence']} "
             f"gesture={gesture['gesture']} "
             f"confidence={gesture['confidence']}"
@@ -832,18 +912,119 @@ def calculate_crc32(text):
         & 0xFFFFFFFF
     )
 
-async def keyboard_sender(client):
-    global command_sequence
+def connected_gloves():
+    return [
+        glove
+        for glove in gloves.values()
+        if glove.client is not None
+        and glove.client.is_connected
+    ]
+
+
+async def write_command(glove, payload):
+    # One glove failing must not stop the other from
+    # receiving the same command.
+    try:
+        await glove.client.write_gatt_char(
+            COMMAND_CHAR_UUID,
+            payload,
+            response=True
+        )
+
+    except Exception as error:
+        print(
+            f"[BLE] {glove.device_id} "
+            f"command failed: {error}"
+        )
+
+
+async def broadcast_command(payload):
+    targets = connected_gloves()
+
+    if not targets:
+        print("[BLE] No gloves connected")
+        return
+
+    await asyncio.gather(
+        *[
+            write_command(glove, payload)
+            for glove in targets
+        ]
+    )
+
+
+async def send_pipeline_packet(glove, corrupt):
+
+    sample = random.choice(DUMMY_SAMPLES)
+
+    timestamp = int(time.time() * 1000)
+
+    packet = (
+        f"DATA,"
+        f"{glove.device_id},"
+        f"{glove.command_sequence},"
+        f"{timestamp},"
+        f"{sample['ax']},"
+        f"{sample['ay']},"
+        f"{sample['az']},"
+        f"{sample['gx']},"
+        f"{sample['gy']},"
+        f"{sample['gz']},"
+        f"{sample['hall1']},"
+        f"{sample['hall2']}"
+    )
+    crc = calculate_crc32(
+        packet
+    )
+
+    # Reliability demo:
+    # 'c' deliberately sends an incorrect CRC.
+    if corrupt:
+
+        bad_crc = crc ^ 0x00000001
+
+        packet = (
+            f"{packet},"
+            f"{bad_crc:08X}"
+        )
+
+        print(
+            f"[TEST] Sending intentionally "
+            f"corrupted packet {glove.device_id} "
+            f"seq={glove.command_sequence}"
+        )
+
+    else:
+
+        packet = (
+            f"{packet},"
+            f"{crc:08X}"
+        )
+
+    await write_command(
+        glove,
+        packet.encode()
+    )
+
+    print(
+        f"[MAC -> {glove.device_id}] "
+        f"seq={glove.command_sequence}"
+    )
+
+    glove.command_sequence += 1
+
+
+async def keyboard_sender():
     global stream_mode
 
     print()
-    print("========== COMMANDS ==========")
+    print("========== COMMANDS (ALL CONNECTED GLOVES) ==========")
     print("ENTER : send pipeline packet")
     print("s     : start 100 Hz stream")
     print("m     : maximum-speed stream")
     print("x     : stop stream")
     print("q     : stop keyboard input")
-    print("==============================")
+    print("=====================================================")
     print()
 
     while True:
@@ -852,15 +1033,14 @@ async def keyboard_sender(client):
             "SEND> "
         )
         if text.lower() == "s":
-            global last_ble_sequence
-            last_ble_sequence = None
+
+            for glove in gloves.values():
+                glove.last_ble_sequence = None
 
             stream_mode = "normal"
 
-            await client.write_gatt_char(
-                COMMAND_CHAR_UUID,
-                b"CONTROL,START_STREAM",
-                response=True
+            await broadcast_command(
+                b"CONTROL,START_STREAM"
             )
 
             print(
@@ -873,10 +1053,8 @@ async def keyboard_sender(client):
 
             stream_mode = None
 
-            await client.write_gatt_char(
-                COMMAND_CHAR_UUID,
-                b"CONTROL,STOP_STREAM",
-                response=True
+            await broadcast_command(
+                b"CONTROL,STOP_STREAM"
             )
 
             print(
@@ -889,10 +1067,8 @@ async def keyboard_sender(client):
             print("[KEYBOARD] Input stopped")
             return
         if text.lower() == "m":
-            await client.write_gatt_char(
-                COMMAND_CHAR_UUID,
-                b"CONTROL,MAX_STREAM",
-                response=True
+            await broadcast_command(
+                b"CONTROL,MAX_STREAM"
             )
 
             print(
@@ -900,229 +1076,207 @@ async def keyboard_sender(client):
             )
             continue
 
-        sample = random.choice(DUMMY_SAMPLES)
+        targets = connected_gloves()
 
-        timestamp = int(time.time() * 1000)
-
-        packet = (
-            f"DATA,"
-            f"GLOVE_01,"
-            f"{command_sequence},"
-            f"{timestamp},"
-            f"{sample['ax']},"
-            f"{sample['ay']},"
-            f"{sample['az']},"
-            f"{sample['gx']},"
-            f"{sample['gy']},"
-            f"{sample['gz']},"
-            f"{sample['hall1']},"
-            f"{sample['hall2']}"
-        )
-        crc = calculate_crc32(
-            packet
-        )
-
-        # Reliability demo:
-        # 'c' deliberately sends an incorrect CRC.
-        if text.lower() == "c":
-
-            bad_crc = crc ^ 0x00000001
-
-            packet = (
-                f"{packet},"
-                f"{bad_crc:08X}"
-            )
-
-            print(
-                f"[TEST] Sending intentionally "
-                f"corrupted packet seq={command_sequence}"
-            )
-
-        else:
-
-            packet = (
-                f"{packet},"
-                f"{crc:08X}"
-            )
-
-        await client.write_gatt_char(
-            COMMAND_CHAR_UUID,
-            packet.encode(),
-            response=True
-        )
-
-        print(
-            f"[MAC -> GLOVE] "
-            f"seq={command_sequence}"
-        )
-
-        command_sequence += 1
-async def ble_connection_manager():
-    global stream_packets_since_connect
-    global stream_active
-    global stream_mode
-    global last_ble_sequence
-
-    while True:
-
-        # ------------------------------------------------
-        # SEARCH FOR FIREBEETLE
-        # ------------------------------------------------
-
-        print(
-            f"[BLE] Searching for {DEVICE_NAME}..."
-        )
-
-        discovered = await BleakScanner.discover(
-            timeout=10,
-            return_adv=True
-        )
-
-        device = None
-
-        for _, (candidate, advertisement) in discovered.items():
-
-            advertised_name = (
-                advertisement.local_name
-                or candidate.name
-            )
-
-            if advertised_name == DEVICE_NAME:
-                device = candidate
-                break
-
-        if device is None:
-
-            print(
-                "[BLE] Glove not found. "
-                "Retrying in 2 seconds..."
-            )
-
-            await asyncio.sleep(2)
+        if not targets:
+            print("[BLE] No gloves connected")
             continue
 
-        print(
-            "[BLE] Glove found"
+        await asyncio.gather(
+            *[
+                send_pipeline_packet(
+                    glove,
+                    text.lower() == "c"
+                )
+                for glove in targets
+            ]
         )
 
 
-        # ------------------------------------------------
-        # CONNECT TO FIREBEETLE
-        # ------------------------------------------------
+async def glove_connection(glove, device):
+    # Runs one BLE connection until that glove disconnects.
+    # Each glove has its own task, so one glove dropping
+    # does not interrupt the other.
 
-        try:
+    try:
 
-            async with BleakClient(device) as client:
-
-                print(
-                    "[BLE] Connected"
-                )
-                last_ble_sequence = None
-                stream_packets_since_connect = 0
-                stream_active = False
-
-
-                # ----------------------------------------
-                # NEW BLE SESSION
-                # ----------------------------------------
-                #
-                # The FireBeetle may have rebooted.
-                # Its sequence counter may therefore
-                # restart from zero.
-                #
-                # Forget the sequence number from the
-                # previous BLE session.
-                # ----------------------------------------
-
-                last_ble_sequence = None
-
-
-                # ----------------------------------------
-                # SUBSCRIBE TO NOTIFICATIONS FIRST
-                # ----------------------------------------
-                #
-                # Do this BEFORE restoring streaming.
-                #
-                # Otherwise the FireBeetle could start
-                # sending notifications before the Mac
-                # has subscribed to them.
-                # ----------------------------------------
-
-                await client.start_notify(
-                    SENSOR_CHAR_UUID,
-                    notification_handler
-                )
-
-                print(
-
-                    "[BLE] Notifications subscribed"
-
-                )
-
-                last_ble_sequence = None
-
-                await asyncio.sleep(1)
-
-                await restore_stream(client)
-
-                keyboard = asyncio.create_task(
-
-                    keyboard_sender(client)
-
-                )
-
-                print(
-
-                    "[BLE] FireBeetle ready"
-
-                )
-
-
-                # ----------------------------------------
-                # START KEYBOARD INPUT FOR THIS CONNECTION
-                # ----------------------------------------
-
-
-
-                # ----------------------------------------
-                # WAIT UNTIL BLE CONNECTION IS LOST
-                # ----------------------------------------
-
-                while client.is_connected:
-                    await asyncio.sleep(1)
-
-
-                print(
-                    "[BLE] FireBeetle disconnected"
-                )
-
-
-                # This keyboard task references the old
-                # BleakClient, so cancel it before
-                # reconnecting.
-                keyboard.cancel()
-
-
-        # ------------------------------------------------
-        # BLE ERROR
-        # ------------------------------------------------
-
-        except Exception as error:
+        async with BleakClient(device) as client:
 
             print(
-                f"[BLE] Connection lost: {error}"
+                f"[BLE] {glove.device_id} Connected"
+            )
+
+            # ----------------------------------------
+            # NEW BLE SESSION
+            # ----------------------------------------
+            #
+            # The FireBeetle may have rebooted.
+            # Its sequence counter may therefore
+            # restart from zero.
+            #
+            # Forget the sequence number from the
+            # previous BLE session.
+            # ----------------------------------------
+
+            glove.last_ble_sequence = None
+            glove.stream_packets_since_connect = 0
+            glove.stream_active = False
+
+
+            # ----------------------------------------
+            # SUBSCRIBE TO NOTIFICATIONS FIRST
+            # ----------------------------------------
+            #
+            # Do this BEFORE restoring streaming.
+            #
+            # Otherwise the FireBeetle could start
+            # sending notifications before the Mac
+            # has subscribed to them.
+            # ----------------------------------------
+
+            await client.start_notify(
+                SENSOR_CHAR_UUID,
+                make_notification_handler(glove)
+            )
+
+            print(
+                f"[BLE] {glove.device_id} "
+                "Notifications subscribed"
+            )
+
+            glove.client = client
+
+            await asyncio.sleep(1)
+
+            await restore_stream(glove, client)
+
+            print(
+                f"[BLE] {glove.device_id} FireBeetle ready"
             )
 
 
-        # ------------------------------------------------
-        # RECONNECT
-        # ------------------------------------------------
+            # ----------------------------------------
+            # WAIT UNTIL BLE CONNECTION IS LOST
+            # ----------------------------------------
+
+            while client.is_connected:
+                await asyncio.sleep(1)
+
+
+            print(
+                f"[BLE] {glove.device_id} "
+                "FireBeetle disconnected"
+            )
+
+
+    # ------------------------------------------------
+    # BLE ERROR
+    # ------------------------------------------------
+
+    except Exception as error:
 
         print(
-            "[BLE] Reconnecting in 2 seconds..."
+            f"[BLE] {glove.device_id} "
+            f"Connection lost: {error}"
         )
 
-        await asyncio.sleep(2)
+    finally:
+
+        glove.client = None
+
+
+    # ------------------------------------------------
+    # RECONNECT
+    # ------------------------------------------------
+
+    print(
+        f"[BLE] {glove.device_id} "
+        "Reconnecting in 2 seconds..."
+    )
+
+    await asyncio.sleep(2)
+
+
+async def ble_connection_manager():
+    # One shared scan finds any glove that isn't connected.
+    # Only one scan runs at a time, matching dual_ble_test.py.
+
+    connections = {}
+
+    try:
+
+        while True:
+
+            for device_id, task in list(connections.items()):
+                if task.done():
+                    del connections[device_id]
+
+            missing = {
+                glove.ble_name: glove
+                for glove in gloves.values()
+                if glove.device_id not in connections
+            }
+
+            if not missing:
+                await asyncio.sleep(1)
+                continue
+
+
+            # --------------------------------------------
+            # SEARCH FOR FIREBEETLES
+            # --------------------------------------------
+
+            print(
+                "[BLE] Searching for "
+                f"{', '.join(missing)}..."
+            )
+
+            discovered = await BleakScanner.discover(
+                timeout=10,
+                return_adv=True
+            )
+
+            for _, (candidate, advertisement) in discovered.items():
+
+                advertised_name = (
+                    advertisement.local_name
+                    or candidate.name
+                )
+
+                glove = missing.pop(advertised_name, None)
+
+                if glove is None:
+                    continue
+
+                print(
+                    f"[BLE] {glove.device_id} found"
+                )
+
+                # ----------------------------------------
+                # CONNECT TO FIREBEETLE
+                # ----------------------------------------
+
+                connections[glove.device_id] = (
+                    asyncio.create_task(
+                        glove_connection(glove, candidate)
+                    )
+                )
+
+            if missing:
+
+                print(
+                    "[BLE] Not found: "
+                    f"{', '.join(missing)}. "
+                    "Retrying in 2 seconds..."
+                )
+
+                await asyncio.sleep(2)
+
+    finally:
+
+        for task in connections.values():
+            task.cancel()
+
 
 async def main():
 
@@ -1158,39 +1312,43 @@ async def main():
     # HELLO / ACK
     # --------------------------------
 
-    hello = (
-        f"HELLO,"
-        f"{DEVICE_ID},"
-        f"{PROTOCOL_VERSION}\n"
-    )
+    # One HELLO per glove, all on the same TCP connection.
 
-    writer.write(
-        hello.encode()
-    )
+    for device_id in gloves:
 
-    await writer.drain()
-
-    print(
-        "[GATEWAY] HELLO sent"
-    )
-
-    response = await reader.readline()
-
-    if not response:
-        raise ConnectionError(
-            "Ultra96 disconnected during handshake"
+        hello = (
+            f"HELLO,"
+            f"{device_id},"
+            f"{PROTOCOL_VERSION}\n"
         )
 
-    ack = response.decode().strip()
-
-    if ack != f"ACK,{DEVICE_ID}":
-        raise RuntimeError(
-            f"Unexpected ACK: {ack}"
+        writer.write(
+            hello.encode()
         )
 
-    print(
-        f"[GATEWAY] Handshake successful: {ack}"
-    )
+        await writer.drain()
+
+        print(
+            f"[GATEWAY] HELLO sent for {device_id}"
+        )
+
+        response = await reader.readline()
+
+        if not response:
+            raise ConnectionError(
+                "Ultra96 disconnected during handshake"
+            )
+
+        ack = response.decode().strip()
+
+        if ack != f"ACK,{device_id}":
+            raise RuntimeError(
+                f"Unexpected ACK: {ack}"
+            )
+
+        print(
+            f"[GATEWAY] Handshake successful: {ack}"
+        )
 
 
     sender = asyncio.create_task(
@@ -1216,6 +1374,12 @@ async def main():
         stream_monitor()
     )
 
+    # One keyboard for both gloves. It isn't in the gather below,
+    # so 'q' stops input without stopping the pipeline.
+    keyboard = asyncio.create_task(
+        keyboard_sender()
+    )
+
     print()
     print(
         "[GATEWAY] PIPELINE RUNNING"
@@ -1239,6 +1403,7 @@ async def main():
         stats.cancel()
         ble_manager.cancel()
         stream_monitor_task.cancel()
+        keyboard.cancel()
 
         phone_server.close()
 

@@ -8,6 +8,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 
 from model import build_model
+import matplotlib.pyplot as plt
 
 LABEL_MAP_PATH = "Data/label_map.json"
 
@@ -29,14 +30,15 @@ def objective(trial, X_train, y_train, X_val, y_val):
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     print(f"Using {device} device")
     model = define_model(trial).to(device)
+    batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
 
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=5, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
-    val_dataloader = DataLoader(val_dataset, batch_size=5, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-    num_epochs=50
+    num_epochs=200
     lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
     optimizer = optim.Adam(model.parameters(), lr= lr)
     loss_criterion = nn.CrossEntropyLoss()
@@ -44,6 +46,9 @@ def objective(trial, X_train, y_train, X_val, y_val):
     best_epoch = 1
     epochs_no_improve = 0
     PATIENCE = 10
+
+    train_losses=[]
+    val_losses=[]
 
     for epoch in range(num_epochs):
         running_loss = 0
@@ -75,6 +80,8 @@ def objective(trial, X_train, y_train, X_val, y_val):
         avg_vloss = running_vloss / len(val_dataloader)
         print ("training loss: ", avg_training_loss)
         print ("validation loss: ", avg_vloss)
+        train_losses.append(avg_training_loss)
+        val_losses.append(avg_vloss)
 
         trial.report(avg_vloss, epoch)
         if trial.should_prune():
@@ -90,6 +97,8 @@ def objective(trial, X_train, y_train, X_val, y_val):
                 print("early stopping")
                 break
     
+    trial.set_user_attr("train_losses", train_losses)
+    trial.set_user_attr("val_losses", val_losses)
     trial.set_user_attr("best_epoch", best_epoch)
     return best_vloss
 
@@ -127,6 +136,24 @@ if __name__ == "__main__":
     print("Best trial:")
     trial = study.best_trial
 
+    tl = trial.user_attrs["train_losses"]
+    vl = trial.user_attrs["val_losses"]
+    best_ep = trial.user_attrs["best_epoch"]
+    epochs = range(1, len(tl) + 1)
+
+    # plot train and validation loss curve
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, tl, label="train loss")
+    plt.plot(epochs, vl, label="val loss")
+    plt.axvline(best_ep, color="gray", linestyle="--", label=f"best epoch ({best_ep})")
+    plt.xlabel("epoch")
+    plt.ylabel("cross-entropy loss")
+    plt.title(f"Best trial #{trial.number}")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig("loss_curve.png", dpi=150)
+
     print("  Value: ", trial.value)
 
     print("  Params: ")
@@ -140,6 +167,7 @@ if __name__ == "__main__":
         "kernels":  [p[f"kernel_size_l{i}"] for i in range(n)],
         "lr": p["lr"],
         "best_epoch": trial.user_attrs["best_epoch"],
+        "batch_size": p["batch_size"]
     }
     with open("best_params.json", "w") as f:
         json.dump(config, f)

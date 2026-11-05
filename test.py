@@ -22,8 +22,10 @@ def evaluate(run_dir):
     with open(run_dir / "best_params.json") as f:
         cfg = json.load(f)
 
-    with open(run_dir / "label_map.json") as f:
-        num_classes = len(json.load(f))
+    with open(run_dir / 'label_map.json') as f:
+        label_map = json.load(f)
+    class_names = [n for n, i in sorted(label_map.items(), key=lambda kv: kv[1])]
+    num_classes = len(class_names)
 
     model = build_model(cfg["channels"], cfg["kernels"], num_classes)
     model.load_state_dict(torch.load(run_dir / "model.pt", map_location="cpu"))
@@ -35,9 +37,15 @@ def evaluate(run_dir):
         logits = model(X_test)
         y_pred = logits.argmax(1)
 
+    idx = list(range(len(class_names)))
     print(classification_report(y_test, y_pred, zero_division=0))
     print("confusion matrix (rows=true, cols=pred):")
-    print(confusion_matrix(y_test, y_pred))
+    # print(confusion_matrix(y_test, y_pred))
+    cm = confusion_matrix(y_test, y_pred, labels=idx)
+    width = max(len(n) for n in class_names)
+    print(" " * width + " " + "".join(f"{i:>4}" for i in idx))      # column header: class numbers
+    for i, row in enumerate(cm):
+        print(f"{class_names[i]:>{width}} " + "".join(f"{v:>4}" for v in row) + f"   ({i})")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

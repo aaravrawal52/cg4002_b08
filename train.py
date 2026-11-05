@@ -31,7 +31,7 @@ def train_model(X, y):
     model = define_model(stats).to(device)
 
     dataset = torch.utils.data.TensorDataset(X, y)
-    dataloader = DataLoader(dataset, batch_size=5, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=stats["batch_size"], shuffle=True)
 
     num_epochs= stats["best_epoch"]
     lr = stats["lr"]

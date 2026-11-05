@@ -71,8 +71,10 @@ def quantization():
     with open(model_dir/'best_params.json', "r") as file:
         best_params = json.load(file)
     
-    with open(model_dir/'label_map.json', "r") as file:
-        num_classes = len(json.load(file))
+    with open(model_dir / 'label_map.json') as f:
+        label_map = json.load(f)
+    class_names = [n for n, i in sorted(label_map.items(), key=lambda kv: kv[1])]
+    num_classes = len(class_names)
 
     model = build_model(best_params["channels"], best_params["kernels"], num_classes)
     model.load_state_dict(torch.load(model_dir/'model.pt'))
@@ -115,7 +117,7 @@ def quantization():
     else:
         X, y = X_calib, y_calib
 
-    evaluate(X,y, quant_model)
+    evaluate(X,y, quant_model, class_names)
 
     # handle quantization result
     if quant_mode == 'calib':
@@ -124,14 +126,22 @@ def quantization():
         quantizer.export_xmodel(deploy_check=False)
         quantizer.export_onnx_model()     
 
-def evaluate(X, y, quant_model):
+def evaluate(X, y, quant_model, class_names):
     with torch.no_grad():
         logits = quant_model(X)
         pred = logits.argmax(1)
+    
+    idx = list(range(len(class_names)))
+    print("idx: ", idx)
 
     print(classification_report(y, pred, zero_division=0))
     print("confusion matrix (rows=true, cols=pred):")
-    print(confusion_matrix(y, pred))
+    # print(confusion_matrix(y, pred, labels=idx))
+    cm = confusion_matrix(y, pred, labels=idx)
+    width = max(len(n) for n in class_names)
+    print(" " * width + " " + "".join(f"{i:>4}" for i in idx))      # column header: class numbers
+    for i, row in enumerate(cm):
+        print(f"{class_names[i]:>{width}} " + "".join(f"{v:>4}" for v in row) + f"   ({i})")
 
 
 if __name__ == '__main__':

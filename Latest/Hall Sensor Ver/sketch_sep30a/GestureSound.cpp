@@ -1,0 +1,213 @@
+/*
+ * GestureSound.cpp -- passive buzzer, hardware PWM, FireBeetle ESP32.
+ * Requires Arduino-ESP32 2.x or 3.x and your existing GestureProcessor.h.
+ * Replace the earlier DAC version with this file. Do not compile both.
+ * Compile this .cpp normally; do not #include it from another source file.
+ *
+ * INTEGRATION (same public functions as the previous version):
+ * 1. Below the #includes in GestureProcessor.cpp, add these declarations:
+ *      bool initializeGestureSound();
+ *      bool playGestureSound(GestureType type);
+ *
+ * 2. Inside initializeGestureProcessor(), add:
+ *      if (!initializeGestureSound()) {
+ *          Serial.println("[SOUND] Initialization failed");
+ *      }
+ *    Initialize once before sensor processing starts (not from an ISR).
+ *
+ * 3. In finishGesture(), immediately after result.completed = true, add:
+ *      playGestureSound(result.type);
+ *    Call exactly once per completed gesture, not once per sensor sample.
+ *    No additional loop() call is necessary.
+ *
+ * OUTPUT / WIRING:
+ * GPIO25 is now a 3.3 V digital PWM output, not an analog DAC output.
+ * For a small, GPIO-compatible passive PIEZO transducer:
+ *   GPIO25 -> 220-330 ohm series resistor -> piezo +; piezo - -> GND.
+ * Confirm the buzzer type/rating before connecting it. A passive magnetic
+ * buzzer generally needs a transistor driver and flyback diode; do not
+ * assume an unidentified kit buzzer can be driven directly by the GPIO.
+ * For a module, follow its voltage/logic specifications and share ground.
+ * This code expects an active-high driver (LOW = silent).
+ *
+ * WHY THIS DOES NOT WAIT IN THE GESTURE LOOP:
+ * playGestureSound() only sends a small message to a FreeRTOS queue with
+ * zero wait time. Hardware LEDC generates the square wave. A separate
+ * low-priority task changes notes and sleeps between them; its vTaskDelay()
+ * suspends only that sound task, allowing sensor processing to continue.
+ * This is not a guarantee of zero scheduling overhead. Test timing on your
+ * complete system. Mechanically isolate the buzzer from the IMU if its
+ * vibration causes false detections.
+ *
+ * Five sounds (frequency in Hz, duration in ms; 0 Hz means silence):
+ *   SWIPE_UP: rising chime; SWIPE_DOWN: falling chime;
+ *   SWIPE_LEFT: two low beeps; SWIPE_RIGHT: three high beeps;
+ *   UNRECOGNIZED: one long low beep (the unclassified enum in your code).
+ * Adjust the Note arrays below if your buzzer is too quiet at these pitches.
+ * Other gesture types, including NONE, are ignored.
+ *
+ * Up to eight pending sounds are queued FIFO, including repeated gestures.
+ * playGestureSound() returns false if not initialized, unsupported, or full.
+ * A full queue drops the new sound instead of delaying recognition.
+ * A true return means queued, not that physical playback was verified.
+ *
+ * PWM RESOURCE NOTE:
+ * Do not use this pin for other outputs. On core 2.x, this file reserves
+ * LEDC channel 6; keep channel 7 free too because it shares the timer.
+ * On core 3.x, the channel is allocated automatically. Other PWM outputs
+ * must not share its timer if they need an independent frequency.
+ * API: https://docs.espressif.com/projects/arduino-esp32/en/latest/api/ledc.html
+ */
+
+#include <Arduino.h>
+#include "GestureProcessor.h"
+#include <esp_arduino_version.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+
+#if !defined(CONFIG_IDF_TARGET_ESP32)
+#error "This file is configured for the original ESP32 / FireBeetle DFR0478."
+#endif
+
+#ifndef GESTURE_SOUND_PWM_PIN
+#define GESTURE_SOUND_PWM_PIN 25
+#endif
+
+namespace {
+constexpr uint8_t BUZZER_PIN = GESTURE_SOUND_PWM_PIN;
+constexpr uint8_t PWM_RESOLUTION = 10;
+constexpr uint32_t INITIAL_FREQUENCY = 2000;
+constexpr UBaseType_t QUEUE_LENGTH = 8;
+#if ESP_ARDUINO_VERSION_MAJOR < 3
+constexpr uint8_t PWM_CHANNEL = 6; // Reserve this channel and its paired timer.
+#endif
+
+struct Note {
+    uint16_t frequencyHz;
+    uint16_t durationMs;
+};
+struct Melody {
+    const Note *notes;
+    size_t count;
+};
+
+constexpr Note UP[] = {{2000, 100}, {2500, 100}, {3000, 140}, {0, 60}};
+constexpr Note DOWN[] = {{3000, 100}, {2500, 100}, {2000, 140}, {0, 60}};
+constexpr Note LEFT[] = {{2000, 100}, {0, 65}, {2000, 100}, {0, 60}};
+constexpr Note RIGHT[] = {
+    {3500, 70}, {0, 50}, {3500, 70}, {0, 50}, {3500, 70}, {0, 60}
+};
+constexpr Note UNKNOWN[] = {{1500, 350}, {0, 60}};
+
+template <size_t N>
+Melody melodyFor(const Note (&notes)[N]) { return {notes, N}; }
+
+Melody selectMelody(GestureType type) {
+    switch (type) {
+        case GestureType::SWIPE_UP:     return melodyFor(UP);
+        case GestureType::SWIPE_DOWN:   return melodyFor(DOWN);
+        case GestureType::SWIPE_LEFT:   return melodyFor(LEFT);
+        case GestureType::SWIPE_RIGHT:  return melodyFor(RIGHT);
+        case GestureType::UNRECOGNIZED: return melodyFor(UNKNOWN);
+        default:                       return {nullptr, 0};
+    }
+}
+
+QueueHandle_t soundQueue = nullptr;
+TaskHandle_t soundTask = nullptr;
+
+void silenceBuzzer() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWrite(BUZZER_PIN, 0);
+#else
+    ledcWrite(PWM_CHANNEL, 0);
+#endif
+}
+
+bool setFrequency(uint16_t frequencyHz) {
+    if (frequencyHz == 0) {
+        silenceBuzzer();
+        return true;
+    }
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    return ledcWriteTone(BUZZER_PIN, frequencyHz) != 0;
+#else
+    return ledcWriteTone(PWM_CHANNEL, frequencyHz) != 0;
+#endif
+}
+
+bool attachBuzzer() {
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    if (!ledcAttach(BUZZER_PIN, INITIAL_FREQUENCY, PWM_RESOLUTION)) return false;
+#else
+    if (ledcSetup(PWM_CHANNEL, INITIAL_FREQUENCY, PWM_RESOLUTION) == 0) return false;
+    ledcAttachPin(BUZZER_PIN, PWM_CHANNEL);
+#endif
+    silenceBuzzer();
+    return true;
+}
+
+void detachBuzzer() {
+    silenceBuzzer();
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcDetach(BUZZER_PIN);
+#else
+    ledcDetachPin(BUZZER_PIN);
+#endif
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
+}
+
+// Called only by the dedicated sound task, never by the gesture processor.
+void playMelody(const Melody &melody) {
+    for (size_t i = 0; i < melody.count; ++i) {
+        const Note &note = melody.notes[i];
+        if (!setFrequency(note.frequencyHz)) break;
+        const TickType_t ticks = pdMS_TO_TICKS(note.durationMs);
+        vTaskDelay(ticks > 0 ? ticks : 1);
+    }
+    silenceBuzzer();
+}
+
+void soundTaskMain(void *) {
+    for (;;) {
+        GestureType type;
+        // Sleeps without using CPU while there are no pending sounds.
+        if (xQueueReceive(soundQueue, &type, portMAX_DELAY) == pdTRUE) {
+            playMelody(selectMelody(type));
+        }
+    }
+}
+} // namespace
+
+bool initializeGestureSound() {
+    if (soundTask != nullptr) return true;
+    soundQueue = xQueueCreate(QUEUE_LENGTH, sizeof(GestureType));
+    if (soundQueue == nullptr) return false;
+
+    if (!attachBuzzer()) {
+        vQueueDelete(soundQueue);
+        soundQueue = nullptr;
+        return false;
+    }
+
+    // ESP32 stack size is in bytes. Priority 1; task sleeps between notes.
+    if (xTaskCreate(soundTaskMain, "gesture_sound", 3072, nullptr, 1,
+                    &soundTask) != pdPASS) {
+        soundTask = nullptr;
+        detachBuzzer();
+        vQueueDelete(soundQueue);
+        soundQueue = nullptr;
+        return false;
+    }
+    return true;
+}
+
+bool playGestureSound(GestureType type) {
+    if (soundTask == nullptr || selectMelody(type).notes == nullptr) return false;
+    // No delay or wait for queue space, even when a sound is already playing.
+    return xQueueSend(soundQueue, &type, 0) == pdTRUE;
+}

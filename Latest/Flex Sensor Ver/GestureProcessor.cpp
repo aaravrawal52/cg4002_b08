@@ -19,20 +19,20 @@ static constexpr unsigned long QUIET_TIME_US = 180000;
 static constexpr size_t CALIBRATION_SAMPLES = 70;
 
 static constexpr size_t MOTION_WINDOW_SIZE = 18;
-static constexpr size_t HALL_WINDOW_OVERLAP = 7;
+static constexpr size_t FLEX_WINDOW_OVERLAP = 7;
 
-static constexpr size_t HALL_WINDOW_STEP =
-    MOTION_WINDOW_SIZE - HALL_WINDOW_OVERLAP;
+static constexpr size_t FLEX_WINDOW_STEP =
+    MOTION_WINDOW_SIZE - FLEX_WINDOW_OVERLAP;
 
-static constexpr size_t HALL_HISTORY_SIZE =
-    MOTION_WINDOW_SIZE + HALL_WINDOW_STEP;
+static constexpr size_t FLEX_HISTORY_SIZE =
+    MOTION_WINDOW_SIZE + FLEX_WINDOW_STEP;
 
 static constexpr size_t MAX_SAMPLES =
     MAX_GESTURE_US / SAMPLE_INTERVAL_US + 1;
 
 static constexpr float MIN_MOTION_THRESHOLD = 1.0f;
 static constexpr float MIN_ROTATION_THRESHOLD = 1.0f;
-static constexpr float MIN_HALL_THRESHOLD = 300.0f;
+static constexpr float MIN_FLEX_THRESHOLD = 20.0f;
 
 static constexpr int START_CONFIRMATION_COUNT = 3;
 
@@ -47,8 +47,8 @@ static bool calibrationComplete = false;
 static size_t calibrationCount = 0;
 static size_t madgwickStabalizationCount = 0;
 
-static float hallBaseline1 = 0;
-static float hallBaseline2 = 0;
+static float flexBaseline1 = 0;
+static float flexBaseline2 = 0;
 
 static float accelBaselineX = 0;
 static float accelBaselineY = 0;
@@ -60,13 +60,13 @@ static float gyroBaselineZ = 0;
 
 static float motionNoiseThreshold = 0;
 static float rotationNoiseThreshold = 0;
-static float hall1NoiseThreshold = 0;
-static float hall2NoiseThreshold = 0;
+static float flex1NoiseThreshold = 0;
+static float flex2NoiseThreshold = 0;
 
 static float calibrationMotion[CALIBRATION_SAMPLES];
 static float calibrationRotation[CALIBRATION_SAMPLES];
-static float calibrationHall1[CALIBRATION_SAMPLES];
-static float calibrationHall2[CALIBRATION_SAMPLES];
+static float calibrationFlex1[CALIBRATION_SAMPLES];
+static float calibrationFlex2[CALIBRATION_SAMPLES];
 
 
 // ============================================================
@@ -102,23 +102,23 @@ static int startConfirmationCount = 0;
 static float motionWindow[MOTION_WINDOW_SIZE] = {};
 static float rotationWindow[MOTION_WINDOW_SIZE] = {};
 
-static float hall1Window[HALL_HISTORY_SIZE] = {};
-static float hall2Window[HALL_HISTORY_SIZE] = {};
+static float flex1Window[FLEX_HISTORY_SIZE] = {};
+static float flex2Window[FLEX_HISTORY_SIZE] = {};
 
 static size_t motionWindowCount = 0;
 static size_t rotationWindowCount = 0;
 
-static size_t hall1WindowCount = 0;
-static size_t hall2WindowCount = 0;
+static size_t flex1WindowCount = 0;
+static size_t flex2WindowCount = 0;
 
 static size_t motionWindowIndex = 0;
 static size_t rotationWindowIndex = 0;
 
-static size_t hall1WindowIndex = 0;
-static size_t hall2WindowIndex = 0;
+static size_t flex1WindowIndex = 0;
+static size_t flex2WindowIndex = 0;
 
-static size_t hall1SamplesSinceComparison = HALL_WINDOW_STEP;
-static size_t hall2SamplesSinceComparison = HALL_WINDOW_STEP;
+static size_t flex1SamplesSinceComparison = FLEX_WINDOW_STEP;
+static size_t flex2SamplesSinceComparison = FLEX_WINDOW_STEP;
 
 
 // ============================================================
@@ -143,20 +143,20 @@ void initializeGestureProcessor(float sampleRateHz) {
     motionWindowCount = 0;
     rotationWindowCount = 0;
 
-    hall1WindowCount = 0;
-    hall2WindowCount = 0;
+    flex1WindowCount = 0;
+    flex2WindowCount = 0;
 
     motionWindowIndex = 0;
     rotationWindowIndex = 0;
 
-    hall1WindowIndex = 0;
-    hall2WindowIndex = 0;
+    flex1WindowIndex = 0;
+    flex2WindowIndex = 0;
 
-    hall1SamplesSinceComparison = HALL_WINDOW_STEP;
-    hall2SamplesSinceComparison = HALL_WINDOW_STEP;
+    flex1SamplesSinceComparison = FLEX_WINDOW_STEP;
+    flex2SamplesSinceComparison = FLEX_WINDOW_STEP;
 
-    hallBaseline1 = 0;
-    hallBaseline2 = 0;
+    flexBaseline1 = 0;
+    flexBaseline2 = 0;
 
     accelBaselineX = 0;
     accelBaselineY = 0;
@@ -235,7 +235,7 @@ static void removeGravity(
 static float calculateThreshold(
     const float *values,
     size_t count,
-    bool hallSensor,
+    bool flexSensor,
     float minimumThreshold
 ) {
 
@@ -257,7 +257,7 @@ static float calculateThreshold(
 
     float threshold;
 
-    if (hallSensor) {
+    if (flexSensor) {
         threshold = 4.0f * standardDeviation;
     } else {
         threshold = mean + 4.0f * standardDeviation;
@@ -311,8 +311,8 @@ bool calibrateGestureProcessor(const Sample &rawSample) {
     gyroBaselineY += sample.gy;
     gyroBaselineZ += sample.gz;
 
-    hallBaseline1 += sample.hall1;
-    hallBaseline2 += sample.hall2;
+    flexBaseline1 += sample.flex1;
+    flexBaseline2 += sample.flex2;
 
     calibrationMotion[calibrationCount] = sqrtf(
         sample.ax * sample.ax +
@@ -326,8 +326,8 @@ bool calibrateGestureProcessor(const Sample &rawSample) {
         sample.gz * sample.gz
     );
 
-    calibrationHall1[calibrationCount] = sample.hall1;
-    calibrationHall2[calibrationCount] = sample.hall2;
+    calibrationFlex1[calibrationCount] = sample.flex1;
+    calibrationFlex2[calibrationCount] = sample.flex2;
 
     calibrationCount++;
 
@@ -346,8 +346,8 @@ bool calibrateGestureProcessor(const Sample &rawSample) {
     gyroBaselineY /= divisor;
     gyroBaselineZ /= divisor;
 
-    hallBaseline1 /= divisor;
-    hallBaseline2 /= divisor;
+    flexBaseline1 /= divisor;
+    flexBaseline2 /= divisor;
 
     Serial.printf("AccelBaseline X: %.3f\n", accelBaselineX);
     Serial.printf("AccelBaseline Y: %.3f\n",accelBaselineY);
@@ -370,18 +370,18 @@ bool calibrateGestureProcessor(const Sample &rawSample) {
         MIN_ROTATION_THRESHOLD
     );
 
-    hall1NoiseThreshold = calculateThreshold(
-        calibrationHall1,
+    flex1NoiseThreshold = calculateThreshold(
+        calibrationFlex1,
         CALIBRATION_SAMPLES,
         true,
-        MIN_HALL_THRESHOLD
+        MIN_FLEX_THRESHOLD
     );
 
-    hall2NoiseThreshold = calculateThreshold(
-        calibrationHall2,
+    flex2NoiseThreshold = calculateThreshold(
+        calibrationFlex2,
         CALIBRATION_SAMPLES,
         true,
-        MIN_HALL_THRESHOLD
+        MIN_FLEX_THRESHOLD
     );
 
     calibrationComplete = true;
@@ -400,13 +400,13 @@ bool calibrateGestureProcessor(const Sample &rawSample) {
     );
 
     Serial.printf(
-        "Hall1 threshold: %.3f\n",
-        hall1NoiseThreshold
+        "Flex1 threshold: %.3f\n",
+        flex1NoiseThreshold
     );
 
     Serial.printf(
-        "Hall2 threshold: %.3f\n",
-        hall2NoiseThreshold
+        "Flex2 threshold: %.3f\n",
+        flex2NoiseThreshold
     );
 
     Serial.println("[GESTURE] Calibration complete");
@@ -452,10 +452,10 @@ static bool isNoiseThresholdExceededIMU(
 
 
 // ============================================================
-// HALL WINDOW DETECTION
+// FLEX WINDOW DETECTION
 // ============================================================
 
-static bool isNoiseThresholdExceededHall(
+static bool isNoiseThresholdExceededFlex(
     int value,
     float *window,
     size_t *windowCount,
@@ -467,31 +467,31 @@ static bool isNoiseThresholdExceededHall(
     window[*windowIndex] = value;
 
     *windowIndex =
-        (*windowIndex + 1) % HALL_HISTORY_SIZE;
+        (*windowIndex + 1) % FLEX_HISTORY_SIZE;
 
-    if (*windowCount < HALL_HISTORY_SIZE) {
+    if (*windowCount < FLEX_HISTORY_SIZE) {
         ++(*windowCount);
     }
 
-    if (*windowCount < HALL_HISTORY_SIZE) {
+    if (*windowCount < FLEX_HISTORY_SIZE) {
         return false;
     }
 
     ++(*samplesSinceComparison);
 
-    if (*samplesSinceComparison < HALL_WINDOW_STEP) {
+    if (*samplesSinceComparison < FLEX_WINDOW_STEP) {
         return false;
     }
 
     *samplesSinceComparison = 0;
 
     const size_t currentStart =
-        (*windowIndex + HALL_HISTORY_SIZE -
-         MOTION_WINDOW_SIZE) % HALL_HISTORY_SIZE;
+        (*windowIndex + FLEX_HISTORY_SIZE -
+         MOTION_WINDOW_SIZE) % FLEX_HISTORY_SIZE;
 
     const size_t previousStart =
-        (currentStart + HALL_HISTORY_SIZE -
-         HALL_WINDOW_STEP) % HALL_HISTORY_SIZE;
+        (currentStart + FLEX_HISTORY_SIZE -
+         FLEX_WINDOW_STEP) % FLEX_HISTORY_SIZE;
 
     float currentSum = 0;
     float previousSum = 0;
@@ -499,11 +499,11 @@ static bool isNoiseThresholdExceededHall(
     for (size_t i = 0; i < MOTION_WINDOW_SIZE; i++) {
 
         currentSum += window[
-            (currentStart + i) % HALL_HISTORY_SIZE
+            (currentStart + i) % FLEX_HISTORY_SIZE
         ];
 
         previousSum += window[
-            (previousStart + i) % HALL_HISTORY_SIZE
+            (previousStart + i) % FLEX_HISTORY_SIZE
         ];
     }
 
@@ -524,7 +524,7 @@ static bool isNoiseThresholdExceededHall(
 static bool gestureDetect(
     Sample &sample,
     bool &imuMoving,
-    bool &hallMoving
+    bool &flexMoving
 ) {
 
     float motion = sqrtf(
@@ -555,44 +555,44 @@ static bool gestureDetect(
         rotationNoiseThreshold
     );
 
-    bool hall1Detected = isNoiseThresholdExceededHall(
-        sample.hall1,
-        hall1Window,
-        &hall1WindowCount,
-        &hall1WindowIndex,
-        &hall1SamplesSinceComparison,
-        hall1NoiseThreshold
+    bool flex1Detected = isNoiseThresholdExceededFlex(
+        sample.flex1,
+        flex1Window,
+        &flex1WindowCount,
+        &flex1WindowIndex,
+        &flex1SamplesSinceComparison,
+        flex1NoiseThreshold
     );
 
-    bool hall2Detected = isNoiseThresholdExceededHall(
-        sample.hall2,
-        hall2Window,
-        &hall2WindowCount,
-        &hall2WindowIndex,
-        &hall2SamplesSinceComparison,
-        hall2NoiseThreshold
+    bool flex2Detected = isNoiseThresholdExceededFlex(
+        sample.flex2,
+        flex2Window,
+        &flex2WindowCount,
+        &flex2WindowIndex,
+        &flex2SamplesSinceComparison,
+        flex2NoiseThreshold
     );
 
     imuMoving = motionDetected || rotationDetected;
-    hallMoving = hall1Detected || hall2Detected;
+    flexMoving = flex1Detected || flex2Detected;
 
     #if GESTURE_DEBUG
-    bool moving  = imuMoving || hallMoving;
+    bool moving  = imuMoving || flexMoving;
     if (!gestureActive && moving) {
         Serial.print("motion: ");
         Serial.print(motionDetected);
         Serial.print(", motionThreshold: ");
         Serial.println(motionNoiseThreshold);
 
-        Serial.print("hall1: ");
-        Serial.print(hall1Detected);
-        Serial.print(", hall1Threshold: ");
-        Serial.println(hall1NoiseThreshold);
+        Serial.print("flex1: ");
+        Serial.print(flex1Detected);
+        Serial.print(", flex1Threshold: ");
+        Serial.println(flex1NoiseThreshold);
 
-        Serial.print("hall2: ");
-        Serial.print(hall2Detected);
-        Serial.print(", hall2Threshold: ");
-        Serial.println(hall2NoiseThreshold);
+        Serial.print("flex2: ");
+        Serial.print(flex2Detected);
+        Serial.print(", flex2Threshold: ");
+        Serial.println(flex2NoiseThreshold);
 
         Serial.print("rotation: ");
         Serial.print(rotationDetected);
@@ -601,7 +601,7 @@ static bool gestureDetect(
     }
     #endif
 
-    return imuMoving || hallMoving;
+    return imuMoving || flexMoving;
 }
 
 
@@ -691,21 +691,21 @@ static GestureType classifyGesture() {
     unsigned long maxVerticalTime = 0;
     unsigned long minVerticalTime = 0;
 
-    float hallMinimum = 0;
-    float hallMaximum = 0;
+    float flexMinimum = 0;
+    float flexMaximum = 0;
 
-    float hallStartSum = 0;
-    float hallMiddleSum = 0;
-    float hallEndSum = 0;
+    float flexStartSum = 0;
+    float flexMiddleSum = 0;
+    float flexEndSum = 0;
 
-    const size_t hallSegmentLength =
+    const size_t flexSegmentLength =
         (sampleCount / 5) > 0 ? sampleCount / 5 : 1;
 
-    const size_t hallMiddleStart =
-        (sampleCount - hallSegmentLength) / 2;
+    const size_t flexMiddleStart =
+        (sampleCount - flexSegmentLength) / 2;
 
-    const size_t hallEndStart =
-        sampleCount - hallSegmentLength;
+    const size_t flexEndStart =
+        sampleCount - flexSegmentLength;
 
     for (size_t i = 0; i < sampleCount; i++) {
 
@@ -740,30 +740,30 @@ static GestureType classifyGesture() {
         float horizontalAcceleration = worldX;
         float verticalAcceleration = worldZ;
 
-        float hallSeparation =
-            (sample.hall1 + sample.hall2) * 0.5f;
+        float flexValue =
+            (sample.flex1 + sample.flex2) * 0.5f;
 
         if (i == 0) {
-            hallMinimum = hallSeparation;
-            hallMaximum = hallSeparation;
+            flexMinimum = flexValue;
+            flexMaximum = flexValue;
         } else {
-            hallMinimum = fminf(hallMinimum, hallSeparation);
-            hallMaximum = fmaxf(hallMaximum, hallSeparation);
+            flexMinimum = fminf(flexMinimum, flexValue);
+            flexMaximum = fmaxf(flexMaximum, flexValue);
         }
 
-        if (i < hallSegmentLength) {
-            hallStartSum += hallSeparation;
+        if (i < flexSegmentLength) {
+            flexStartSum += flexValue;
         }
 
         if (
-            i >= hallMiddleStart &&
-            i < hallMiddleStart + hallSegmentLength
+            i >= flexMiddleStart &&
+            i < flexMiddleStart + flexSegmentLength
         ) {
-            hallMiddleSum += hallSeparation;
+            flexMiddleSum += flexValue;
         }
 
-        if (i >= hallEndStart) {
-            hallEndSum += hallSeparation;
+        if (i >= flexEndStart) {
+            flexEndSum += flexValue;
         }
 
         horizontalEnergy +=
@@ -863,57 +863,57 @@ static GestureType classifyGesture() {
     Serial.println(rotationEnergy, 4);
     #endif
 
-    float hallStartMean =
-        hallStartSum / hallSegmentLength;
+    float flexStartMean =
+        flexStartSum / flexSegmentLength;
 
-    float hallMiddleMean =
-        hallMiddleSum / hallSegmentLength;
+    float flexMiddleMean =
+        flexMiddleSum / flexSegmentLength;
 
-    float hallEndMean =
-        hallEndSum / hallSegmentLength;
+    float flexEndMean =
+        flexEndSum / flexSegmentLength;
 
-    float hallRange =
-        hallMaximum - hallMinimum;
+    float flexRange =
+        flexMaximum - flexMinimum;
 
-    float hallNoiseRange =
+    float flexNoiseRange =
         0.5f * (
-            hall1NoiseThreshold +
-            hall2NoiseThreshold
+            flex1NoiseThreshold +
+            flex2NoiseThreshold
         );
 
-    float hallClosedThreshold =
-        hallMinimum + 0.35f * hallRange;
+    float flexClosedThreshold =
+        flexMinimum + 0.35f * flexRange;
 
-    float hallOpenThreshold =
-        hallMinimum + 0.65f * hallRange;
+    float flexOpenThreshold =
+        flexMinimum + 0.65f * flexRange;
 
-    bool hallDataIsUsable =
-        hallRange > hallNoiseRange;
+    bool flexDataIsUsable =
+        flexRange > flexNoiseRange;
 
     bool startsClosed =
-        hallStartMean <= hallClosedThreshold;
+        flexStartMean <= flexClosedThreshold;
 
     bool startsOpen =
-        hallStartMean >= hallOpenThreshold;
+        flexStartMean >= flexOpenThreshold;
 
     bool middleClosed =
-        hallMiddleMean <= hallClosedThreshold;
+        flexMiddleMean <= flexClosedThreshold;
 
     bool middleOpen =
-        hallMiddleMean >= hallOpenThreshold;
+        flexMiddleMean >= flexOpenThreshold;
 
     bool endsClosed =
-        hallEndMean <= hallClosedThreshold;
+        flexEndMean <= flexClosedThreshold;
 
     bool endsOpen =
-        hallEndMean >= hallOpenThreshold;
+        flexEndMean >= flexOpenThreshold;
 
     // --------------------------------------------------------
     // ZOOM DETECTION
     // --------------------------------------------------------
 
     if (
-        hallDataIsUsable &&
+        flexDataIsUsable &&
         rotationEnergy < 4.0f &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f
@@ -948,7 +948,7 @@ static GestureType classifyGesture() {
     // ROTATION
     // --------------------------------------------------------
 
-    if (rotationEnergy > 4.0f && !hallDataIsUsable &&
+    if (rotationEnergy > 4.0f && !flexDataIsUsable &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f ) {
         return GestureType::ROTATION;
@@ -963,7 +963,7 @@ static GestureType classifyGesture() {
          verticalEnergy < 1.5f) ||
 
         (verticalEnergy > 1.0f &&
-         horizontalEnergy < 1.0f) && !hallDataIsUsable
+         horizontalEnergy < 1.0f) && !flexDataIsUsable
     ) {
 
         if (horizontalEnergy > verticalEnergy) {
@@ -1028,8 +1028,8 @@ GestureResult processGestureSample(const Sample &rawSample) {
     Serial.printf("Raw X: %.3f ", sample.ax);
     Serial.printf("Raw Y: %.3f ", sample.ay);
     Serial.printf("Raw Z: %.3f", sample.az);
-    Serial.print("Hall 1: ");
-    Serial.println(sample.hall1);
+    Serial.print("Flex 1: ");
+    Serial.println(sample.flex1);
     */
     
 
@@ -1066,17 +1066,17 @@ GestureResult processGestureSample(const Sample &rawSample) {
     };
 
     bool imuMoving = false;
-    bool hallMoving = false;
+    bool flexMoving = false;
 
     bool moving = gestureDetect(
         sample,
         imuMoving,
-        hallMoving
+        flexMoving
     );
 
     if (!gestureActive) {
 
-        if (hallMoving) {
+        if (flexMoving) {
 
             startConfirmationCount =
                 START_CONFIRMATION_COUNT;

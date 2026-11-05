@@ -16,7 +16,7 @@
 // 1 = First FireBeetle
 // 2 = Second FireBeetle
 
-#define GLOVE_NUMBER 1
+#define GLOVE_NUMBER 2
 
 #if GLOVE_NUMBER == 1
 
@@ -969,13 +969,13 @@ void loop() {
 
         if (result.type == GestureType::UNRECOGNIZED) {
 
-            tag = "IDLE";
+            tag = "UNCLASSIFIED";
 
         } else {
 
             // Locally recognized gesture.
             // The ML segmenter should discard it.
-            tag = "UNCLASSIFIED";
+            tag = "IDLE";
         }
 
     } else if (currentlyActive) {
@@ -983,9 +983,8 @@ void loop() {
         tag = "ACTIVE";
     }
 
-    /*
     //Data Collection for ML
-    
+    /*
     uint32_t currentSensorSequenceForML = sequence;
     
     String messageForML =
@@ -1013,9 +1012,9 @@ void loop() {
     + String(tag);
     
     Serial.println(messageForML);
-    //sequence++; //Enable if no comms 
+    sequence++; //Enable if no comms 
     */
-    
+
     // ========================================================
     // 4. CONTINUOUS BLE SENSOR STREAM
     // ========================================================

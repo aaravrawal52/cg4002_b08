@@ -1,4 +1,3 @@
-
 import serial
 import csv
 import os
@@ -8,7 +7,7 @@ SERIAL_PORT = "COM6"  # Change to your ESP32's COM port
 BAUD_RATE = 115200
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PERSON = "person7"
-ACTION = "pinch_and_drag"  # Change to your desired action
+ACTION = "pinch_and_rotate"  # Change to your desired action
 CSV_PATH = os.path.join(SCRIPT_DIR, PERSON, ACTION, ACTION+"_data.csv")
 
 # CSV column headers
@@ -23,7 +22,6 @@ headers = [
 
 # Create the directory if necessary
 os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-
 # Write headers only if the file does not exist or is empty
 write_header = (
     not os.path.exists(CSV_PATH)

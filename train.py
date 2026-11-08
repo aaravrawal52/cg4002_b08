@@ -63,21 +63,21 @@ def train_model(X, y):
     return model.state_dict(), stats
 
 if __name__ == "__main__":
-    training_data = np.load('preprocessed_data/training_data.npz')
-    val_data = np.load('preprocessed_data/val_data.npz')
-    test_data = np.load('preprocessed_data/test_data.npz')
-    X_train, y_train = training_data['X'], training_data['y']
-    X_train = np.transpose(X_train, axes = (0,2,1))
-    X_train = torch.from_numpy(X_train).float().unsqueeze(2)
-    y_train = torch.from_numpy(y_train).long()
+    train_val_data = np.load('preprocessed_data/train_val_data.npz')
+    X, y = train_val_data['X'], train_val_data['y']
+    mean = X.mean(axis=(0, 1))          # one mean per channel, from training people only
+    std  = X.std(axis=(0, 1))
+    X = (X - mean) / std
+    COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
+    stats = {c: {"mean": float(m), "std_dev": float(s)}
+            for c, m, s in zip(COLUMNS, mean, std)}
+    with open("zscore_stats.json", "w") as f:
+        json.dump(stats, f)
+    X = np.transpose(X, axes = (0,2,1))
+    X = torch.from_numpy(X).float().unsqueeze(2)
+    y = torch.from_numpy(y).long()
 
-    X_val, y_val = val_data['X'], val_data['y']
-    X_val = np.transpose(X_val, axes = (0,2,1))
-    X_val = torch.from_numpy(X_val).float().unsqueeze(2)
-    y_val = torch.from_numpy(y_val).long()
-
-    X = torch.cat((X_train, X_val), 0)
-    y = torch.cat((y_train, y_val), 0)
+    
 
     best_state, stats = train_model(X,y)
     

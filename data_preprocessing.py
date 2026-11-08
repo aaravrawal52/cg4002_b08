@@ -11,15 +11,14 @@ def list_sessions(person_dir):
     person_dir = Path(person_dir)
     return sorted(person for person in person_dir.iterdir())
 
-def train_val_test_sessions(DATA_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS):
+def train_val_test_sessions(DATA_DIR, TRAIN_VAL_SESSIONS, TEST_SESSIONS):
     def recordings(people):
         return [r for person in people for r in list_sessions(Path(DATA_DIR) / person)]
     people = sorted(p.name for p in Path(DATA_DIR).iterdir() if p.is_dir())
-    train_sessions = people[:TRAIN_SESSIONS]
-    val_sessions = people[TRAIN_SESSIONS:TRAIN_SESSIONS+VAL_SESSIONS]
-    test_sessions = people[TRAIN_SESSIONS+VAL_SESSIONS:]
+    train_val_sessions = people[:TRAIN_VAL_SESSIONS]
+    test_sessions = people[TRAIN_VAL_SESSIONS:]
     # return train_sessions, val_sessions, test_sessions
-    return recordings(train_sessions), recordings(val_sessions), recordings(test_sessions)
+    return recordings(train_val_sessions), recordings(test_sessions)
 
 def raw_csv(recording):
     return next(recording.glob("*_data.csv"))
@@ -71,7 +70,6 @@ def label_window(window, df_label):
 def build_dataset(sessions, window_size, COLUMNS, mode):
     """
     Preprocess dataset:
-    - zscore normalization
     - label windows
     
     returns:
@@ -81,6 +79,7 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     TARGET_LEN = 50
     X = []
     y = []
+    group = []
     for session in sessions:
         print("mode: ", mode)
         print("session: ", session)
@@ -88,13 +87,9 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
         instance_raw = raw_csv(session)
         df = pd.read_csv(instance_raw)
         df_label = pd.read_csv(instance_label)
-        # Only gestures in the label map count; idle stretches must not fall back to class 0
+
         df_label = df_label[df_label["gesture"].isin(action_map)].copy()
         df_label["action_class"] = df_label["gesture"].map(action_map).astype(int)
-
-
-        stats = apply_zscore_normalization(df, COLUMNS)
-        print("applied zscore")
 
         for segment in segment_gestures(stream_rows(instance_raw, realtime=False)):
             label = label_window(segment, df_label)
@@ -104,38 +99,36 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
             for row in segment:
                 row_values =[]
                 for c in COLUMNS:
-                    row_values.append((float(row[c]) - stats[c]["mean"]) / stats[c]["std_dev"])
+                    row_values.append(float(row[c]))
                 window_values.append(row_values)
             window_values = resample_segment(window_values, TARGET_LEN)
             X.append(window_values)
             y.append(label)
+            person = int(Path(session).parent.name.replace("person", ""))
+            group.append(person)
     X = np.array(X)
     y = np.array(y)
-    return X, y
+    group = np.array(group)
+    return X, y, group
 
 if __name__ == "__main__":
     DATA_DIR = 'Data'
     label_map = Path(DATA_DIR)/'label_map.json'
     window_size = 50
-    TRAIN_SESSIONS = 5
-    VAL_SESSIONS = 1
+    TRAIN_VAL_SESSIONS = 6
     TEST_SESSIONS = 1
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 
     with open(label_map, "r") as file:
         action_map = json.load(file)
 
-    train_sessions, val_sessions, test_sessions = train_val_test_sessions(DATA_DIR, TRAIN_SESSIONS, VAL_SESSIONS, TEST_SESSIONS)
-    fit_zscore_stats(train_sessions, COLUMNS)
+    train_val_sessions, test_sessions = train_val_test_sessions(DATA_DIR, TRAIN_VAL_SESSIONS, TEST_SESSIONS)
     
-    X_train, y_train = build_dataset(train_sessions, window_size, COLUMNS, "train")
-    print("val session paths: ", val_sessions)
-    X_val, y_val = build_dataset(val_sessions,window_size, COLUMNS, "val")
-    X_test, y_test = build_dataset(test_sessions, window_size, COLUMNS, "test")
+    X_train_val, y_train_val, group_train_val = build_dataset(train_val_sessions, window_size, COLUMNS, "train_val")
+    X_test, y_test, group_test = build_dataset(test_sessions, window_size, COLUMNS, "test")
 
     # save training into file for training.py to load
-    np.savez("preprocessed_data/training_data.npz", X = X_train, y = y_train)
-    np.savez("preprocessed_data/val_data.npz", X = X_val, y = y_val)
-    np.savez("preprocessed_data/test_data.npz", X = X_test, y = y_test)
+    np.savez("preprocessed_data/train_val_data.npz", X = X_train_val, y = y_train_val, group = group_train_val)
+    np.savez("preprocessed_data/test_data.npz", X = X_test, y = y_test, group = group_test)
             
 

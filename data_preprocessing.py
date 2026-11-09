@@ -6,6 +6,7 @@ import pandas as pd
 
 from data_ingestion import segment_gestures, stream_rows
 from deploy.resample import resample_segment
+from config import DATA_DIR, LABEL_MAP_PATH, PREPROCESSED_DIR
 
 def list_sessions(person_dir):
     person_dir = Path(person_dir)
@@ -112,8 +113,7 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     return X, y, group
 
 if __name__ == "__main__":
-    DATA_DIR = 'Data'
-    label_map = Path(DATA_DIR)/'label_map.json'
+    label_map = LABEL_MAP_PATH
     window_size = 50
     TRAIN_VAL_SESSIONS = 6
     TEST_SESSIONS = 1
@@ -128,7 +128,8 @@ if __name__ == "__main__":
     X_test, y_test, group_test = build_dataset(test_sessions, window_size, COLUMNS, "test")
 
     # save training into file for training.py to load
-    np.savez("preprocessed_data/train_val_data.npz", X = X_train_val, y = y_train_val, group = group_train_val)
-    np.savez("preprocessed_data/test_data.npz", X = X_test, y = y_test, group = group_test)
+    PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez(PREPROCESSED_DIR / "train_val_data.npz", X = X_train_val, y = y_train_val, group = group_train_val)
+    np.savez(PREPROCESSED_DIR / "test_data.npz", X = X_test, y = y_test, group = group_test)
             
 

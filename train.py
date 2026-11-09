@@ -9,8 +9,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 
 from model import build_model
-
-LABEL_MAP_PATH = "Data/label_map.json"
+from config import LABEL_MAP_PATH, PREPROCESSED_DIR, BEST_PARAMS_PATH, MODELS_DIR
 
 def define_model(stats):
     channels = stats["channels"]
@@ -23,7 +22,7 @@ def train_model(X, y):
     """
     Uses the optimized hyperparameters to train the model
     """
-    with open('best_params.json') as json_file:
+    with open(BEST_PARAMS_PATH) as json_file:
         stats = json.load(json_file)
 
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
@@ -63,7 +62,7 @@ def train_model(X, y):
     return model.state_dict(), stats
 
 if __name__ == "__main__":
-    train_val_data = np.load('preprocessed_data/train_val_data.npz')
+    train_val_data = np.load(PREPROCESSED_DIR / 'train_val_data.npz')
     X, y = train_val_data['X'], train_val_data['y']
     mean = X.mean(axis=(0, 1))          # one mean per channel, from training people only
     std  = X.std(axis=(0, 1))
@@ -71,7 +70,9 @@ if __name__ == "__main__":
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
     stats = {c: {"mean": float(m), "std_dev": float(s)}
             for c, m, s in zip(COLUMNS, mean, std)}
-    with open("zscore_stats.json", "w") as f:
+    run_dir = MODELS_DIR / datetime.now().strftime("%Y-%m-%d %H%M%S")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with open(run_dir / "zscore_stats.json", "w") as f:
         json.dump(stats, f)
     X = np.transpose(X, axes = (0,2,1))
     X = torch.from_numpy(X).float().unsqueeze(2)
@@ -81,11 +82,8 @@ if __name__ == "__main__":
 
     best_state, stats = train_model(X,y)
     
-    run_dir = Path("models") / datetime.now().strftime("%Y-%m-%d %H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
     torch.save(best_state, run_dir / "model.pt")
     with open(run_dir / "best_params.json", "w") as f:
         json.dump(stats, f)
-    shutil.copy("zscore_stats.json", run_dir / "zscore_stats.json")
     # test/quantize/inspect read the class count from here, so it always matches these weights
     shutil.copy(LABEL_MAP_PATH, run_dir / "label_map.json")

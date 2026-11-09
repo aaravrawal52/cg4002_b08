@@ -10,8 +10,7 @@ from sklearn.model_selection import GroupKFold
 
 from model import build_model
 import matplotlib.pyplot as plt
-
-LABEL_MAP_PATH = "Data/label_map.json"
+from config import GLOVE, LABEL_MAP_PATH, PREPROCESSED_DIR, BEST_PARAMS_PATH
 
 def to_tensor(X):
     return torch.from_numpy(np.transpose(X, (0, 2, 1))).float().unsqueeze(2)
@@ -36,7 +35,7 @@ def objective(trial, X, y, group):
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
 
     num_epochs=200
-    lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     loss_criterion = nn.CrossEntropyLoss()
     PATIENCE = 10
 
@@ -96,8 +95,8 @@ def objective(trial, X, y, group):
                     running_vloss += vloss.item()
             avg_training_loss = running_loss / len(train_dataloader)
             avg_vloss = running_vloss / len(val_dataloader)
-            print ("training loss: ", avg_training_loss)
-            print ("validation loss: ", avg_vloss)
+            # print ("training loss: ", avg_training_loss)
+            # print ("validation loss: ", avg_vloss)
             train_curve.append(avg_training_loss)
             val_curve.append(avg_vloss)
 
@@ -126,14 +125,14 @@ def objective(trial, X, y, group):
     return np.mean(fold_best_vlosses)
 
 if __name__ == "__main__":
-    training_val_data = np.load('preprocessed_data/train_val_data.npz')
+    training_val_data = np.load(PREPROCESSED_DIR / 'train_val_data.npz')
     X, y, group = training_val_data['X'], training_val_data['y'], training_val_data['group']
 
     study = optuna.create_study(
         direction="minimize",
         pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1),
         storage="sqlite:///optuna.db",
-        study_name="gesture",
+        study_name=f"gesture_{GLOVE}",
         load_if_exists=True,
     )
     study.optimize(lambda trial: objective(trial, X, y, group), n_trials=100)
@@ -168,7 +167,7 @@ if __name__ == "__main__":
     plt.legend(fontsize=8)
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig("loss_curve.png", dpi=150)
+    plt.savefig(PREPROCESSED_DIR / "loss_curve.png", dpi=150)
 
     print("  Value: ", trial.value)
 
@@ -185,5 +184,5 @@ if __name__ == "__main__":
         "best_epoch": trial.user_attrs["best_epoch"],
         "batch_size": p["batch_size"]
     }
-    with open("best_params.json", "w") as f:
+    with open(BEST_PARAMS_PATH, "w") as f:
         json.dump(config, f)

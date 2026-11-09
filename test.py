@@ -7,16 +7,17 @@ import torch
 from sklearn.metrics import classification_report, confusion_matrix
 
 from model import build_model
-from data_preprocessing import apply_zscore_normalization
+from config import PREPROCESSED_DIR
 
 
-def load_split(npz_path):
+def load_split(npz_path, run_dir):
     data = np.load(npz_path)
     X, y = data["X"], data["y"]
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
     row_values = []
     X_normalized = []
-    stats = apply_zscore_normalization(data, COLUMNS)
+    with open(Path(run_dir) / "zscore_stats.json") as f:
+        stats = json.load(f)
     mean = np.array([stats[c]["mean"] for c in COLUMNS])
     std  = np.array([stats[c]["std_dev"] for c in COLUMNS])
     X = (X - mean) / std
@@ -39,7 +40,7 @@ def evaluate(run_dir):
     model.load_state_dict(torch.load(run_dir / "model.pt", map_location="cpu"))
     model.eval()
 
-    X_test, y_test = load_split("preprocessed_data/test_data.npz")
+    X_test, y_test = load_split(PREPROCESSED_DIR / "test_data.npz", run_dir)
 
 
     with torch.no_grad():

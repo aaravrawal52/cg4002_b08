@@ -1,0 +1,14 @@
+{
+  "pinch_and_rotate": 0,
+  "pinch_and_drag": 1,
+  "pinch_and_pull": 2,
+  "crumple_and_toss": 3,
+  "grab_and_release": 4,
+  "wiggle_fingers": 5,
+  "point_and_rotate": 6,
+  "swipe_down": 7,
+  "swipe_up": 8,
+  "swipe_left": 9,
+  "swipe_right": 10,
+  "click": 11
+}

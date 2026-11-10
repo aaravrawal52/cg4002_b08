@@ -15,6 +15,14 @@ GLOVES = {
     "GLOVE_02": "CG4002_GLOVE_02",
 }
 
+# Scanning shares the Mac's Bluetooth radio with live connections.
+# A long scan while a glove is streaming makes that glove lose packets,
+# so while any glove is connected the gateway only scans in short bursts
+# for a missing glove, with a pause between bursts.
+SCAN_TIMEOUT_S = 10                # no glove connected
+SCAN_BURST_WHILE_CONNECTED_S = 3   # a glove is connected
+SCAN_GAP_WHILE_CONNECTED_S = 15    # pause between those bursts
+
 COMMAND_CHAR_UUID = (
     "12345678-1234-1234-1234-1234567890ad"
 )
@@ -1197,6 +1205,39 @@ async def glove_connection(glove, device):
     await asyncio.sleep(2)
 
 
+async def scan_for_gloves(wanted_names, timeout):
+    # Returns {ble_name: device} for the wanted gloves seen.
+    # Stops as soon as every wanted glove has been seen, so the
+    # radio goes back to the live connections as early as possible.
+
+    found = {}
+    all_found = asyncio.Event()
+
+    def on_detection(device, advertisement):
+
+        name = advertisement.local_name or device.name
+
+        if name in wanted_names and name not in found:
+
+            found[name] = device
+
+            if len(found) == len(wanted_names):
+                all_found.set()
+
+    async with BleakScanner(detection_callback=on_detection):
+
+        try:
+            await asyncio.wait_for(
+                all_found.wait(),
+                timeout=timeout
+            )
+
+        except asyncio.TimeoutError:
+            pass
+
+    return found
+
+
 async def ble_connection_manager():
     # One shared scan finds any glove that isn't connected.
     # Only one scan runs at a time, matching dual_ble_test.py.
@@ -1226,27 +1267,29 @@ async def ble_connection_manager():
             # SEARCH FOR FIREBEETLES
             # --------------------------------------------
 
+            # Keep scans short while another glove is connected.
+            glove_connected = bool(connections)
+
+            scan_timeout = (
+                SCAN_BURST_WHILE_CONNECTED_S
+                if glove_connected
+                else SCAN_TIMEOUT_S
+            )
+
             print(
                 "[BLE] Searching for "
-                f"{', '.join(missing)}..."
+                f"{', '.join(missing)} "
+                f"({scan_timeout}s scan)..."
             )
 
-            discovered = await BleakScanner.discover(
-                timeout=10,
-                return_adv=True
+            discovered = await scan_for_gloves(
+                set(missing),
+                scan_timeout
             )
 
-            for _, (candidate, advertisement) in discovered.items():
+            for advertised_name, candidate in discovered.items():
 
-                advertised_name = (
-                    advertisement.local_name
-                    or candidate.name
-                )
-
-                glove = missing.pop(advertised_name, None)
-
-                if glove is None:
-                    continue
+                glove = missing.pop(advertised_name)
 
                 print(
                     f"[BLE] {glove.device_id} found"
@@ -1264,13 +1307,19 @@ async def ble_connection_manager():
 
             if missing:
 
+                retry_delay = (
+                    SCAN_GAP_WHILE_CONNECTED_S
+                    if connections
+                    else 2
+                )
+
                 print(
                     "[BLE] Not found: "
                     f"{', '.join(missing)}. "
-                    "Retrying in 2 seconds..."
+                    f"Retrying in {retry_delay} seconds..."
                 )
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(retry_delay)
 
     finally:
 

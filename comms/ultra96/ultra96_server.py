@@ -35,6 +35,10 @@ class GloveSession:
         self.packets_missing = 0
         self.packets_out_of_order = 0
 
+        # True once the current gesture has an UNCLASSIFIED row,
+        # meaning the glove could not classify it and it needs ML.
+        self.saw_unclassified = False
+
 
 def parse_hello_message(message):
     parts = message.split(",")
@@ -288,6 +292,7 @@ while True:
                         )
                         session.expected_sequence = 1
                         session.segmenter = GestureSegmenter()
+                        session.saw_unclassified = False
                     else:
                         session.packets_out_of_order += 1
                         print(
@@ -310,6 +315,8 @@ while True:
 
                 if tag == "UNCLASSIFIED":
 
+                    session.saw_unclassified = True
+
                     print(
                         f"[SEGMENT] {device_id} UNCLASSIFIED "
                         f"seq={sequence}"
@@ -318,6 +325,21 @@ while True:
                 # ----------------------------------------
                 # COMPLETED GESTURE SEGMENT
                 # ----------------------------------------
+
+                # The segmenter returns every finished gesture. Only
+                # gestures the glove tagged UNCLASSIFIED need the
+                # model. Gestures the glove recognised itself end
+                # with IDLE and arrive separately as LOCAL_GESTURE,
+                # so classifying them too would report them twice.
+
+                if segment is not None and not session.saw_unclassified:
+
+                    print(
+                        f"[SEGMENT] {device_id} recognised on glove - "
+                        f"ML skipped ({len(segment)} samples)"
+                    )
+
+                    segment = None
 
                 if segment is not None:
 
@@ -396,6 +418,12 @@ while True:
                     # gesture, confidence, inference_ms = (
                     #     classifier.classify(segment)
                     # )
+
+                # A gesture always ends on an IDLE row, so start the
+                # next gesture with a clean flag. This also clears it
+                # when the segmenter discarded an over-long gesture.
+                if tag == "IDLE":
+                    session.saw_unclassified = False
 
                 # ----------------------------------------
                 # STATISTICS

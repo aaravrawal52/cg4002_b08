@@ -1,0 +1,132 @@
+{
+  "cards": [
+    {
+      "german": "der Apfel",
+      "english": "apple"
+    },
+    {
+      "german": "das Brot",
+      "english": "bread"
+    },
+    {
+      "german": "das Wasser",
+      "english": "water"
+    },
+    {
+      "german": "der Kaffee",
+      "english": "coffee"
+    },
+    {
+      "german": "die Milch",
+      "english": "milk"
+    },
+    {
+      "german": "das Haus",
+      "english": "house"
+    },
+    {
+      "german": "die Schule",
+      "english": "school"
+    },
+    {
+      "german": "das Buch",
+      "english": "book"
+    },
+    {
+      "german": "der Tisch",
+      "english": "table"
+    },
+    {
+      "german": "der Stuhl",
+      "english": "chair"
+    },
+    {
+      "german": "die Tür",
+      "english": "door"
+    },
+    {
+      "german": "das Fenster",
+      "english": "window"
+    },
+    {
+      "german": "die Katze",
+      "english": "cat"
+    },
+    {
+      "german": "der Hund",
+      "english": "dog"
+    },
+    {
+      "german": "die Familie",
+      "english": "family"
+    },
+    {
+      "german": "der Freund",
+      "english": "friend (male)"
+    },
+    {
+      "german": "die Freundin",
+      "english": "friend (female)"
+    },
+    {
+      "german": "der Tag",
+      "english": "day"
+    },
+    {
+      "german": "die Nacht",
+      "english": "night"
+    },
+    {
+      "german": "heute",
+      "english": "today"
+    },
+    {
+      "german": "morgen",
+      "english": "tomorrow"
+    },
+    {
+      "german": "essen",
+      "english": "to eat"
+    },
+    {
+      "german": "trinken",
+      "english": "to drink"
+    },
+    {
+      "german": "gehen",
+      "english": "to go / walk"
+    },
+    {
+      "german": "lernen",
+      "english": "to learn"
+    },
+    {
+      "german": "sprechen",
+      "english": "to speak"
+    },
+    {
+      "german": "groß",
+      "english": "big / tall"
+    },
+    {
+      "german": "klein",
+      "english": "small"
+    },
+    {
+      "german": "gut",
+      "english": "good"
+    },
+    {
+      "german": "danke",
+      "english": "thank you"
+    },
+    {
+      "german": "bitte",
+      "english": "please / you are welcome"
+    },
+    {
+      "german": "Guten Morgen!",
+      "english": "Good morning!"
+    }
+  ]
+}

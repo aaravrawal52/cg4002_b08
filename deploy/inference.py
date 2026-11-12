@@ -36,16 +36,16 @@ def softmax(values):
 
 class GestureClassifier:
     """Loads the DPU and model once; classify() is then called for each finished segment."""
-
-    def __init__(self, deploy_dir=DEPLOY_DIR):
-        deploy_dir = Path(deploy_dir)
+    def __init__(self, overlay, model_dir):
+        model_dir = Path(model_dir)
         # Keep the overlay on self: if it's garbage collected, the runner's DPU resources are freed (segfault)
-        self.overlay = DpuOverlay(DPU_BIT)
-        self.overlay.load_model(str(deploy_dir / "compiled_model.xmodel"))
-        self.dpu = self.overlay.runner
+        self.overlay = overlay
+        self.overlay.load_model(str(model_dir / "compiled_model.xmodel"))
+        self.runner = self.overlay.runner
+        self.graph = self.overlay.graph
 
-        input_tensors = self.dpu.get_input_tensors()
-        output_tensors = self.dpu.get_output_tensors()
+        input_tensors = self.runner.get_input_tensors()
+        output_tensors = self.runner.get_output_tensors()
         self.input_shape = tuple(input_tensors[0].dims)
         output_shape = tuple(output_tensors[0].dims)
         print("input shape:", self.input_shape, "output shape:", output_shape)
@@ -53,8 +53,8 @@ class GestureClassifier:
         self.input_scale = 2 ** input_tensors[0].get_attr("fix_point")
         self.output_scale = 2 ** output_tensors[0].get_attr("fix_point")
 
-        self.zscore_stats = load_zscore_stats(deploy_dir / "zscore_stats.json")
-        self.idx_to_gesture = load_idx_to_gesture(deploy_dir / "label_map.json")
+        self.zscore_stats = load_zscore_stats(model_dir / "zscore_stats.json")
+        self.idx_to_gesture = load_idx_to_gesture(model_dir / "label_map.json")
 
         self.input_data = [np.empty(self.input_shape, dtype=np.int8)]
         self.output_data = [np.empty(output_shape, dtype=np.int8)]
@@ -68,8 +68,8 @@ class GestureClassifier:
         self.input_data[0][0] = quantized.reshape(self.input_shape[1:])
 
         t0 = time.perf_counter()
-        job_id = self.dpu.execute_async(self.input_data, self.output_data)
-        self.dpu.wait(job_id)
+        job_id = self.runner.execute_async(self.input_data, self.output_data)
+        self.runner.wait(job_id)
         t1 = time.perf_counter()
 
         pred_class = int(np.argmax(self.output_data[0][0]))
@@ -83,11 +83,20 @@ class GestureClassifier:
 
 def main():
     """Offline test: replay a tagged CSV through the same segmenter and classifier the server uses."""
-    classifier = GestureClassifier()
-    for segment in segment_gestures(stream_rows(DEPLOY_DIR / "crumple_and_toss_data.csv", realtime=False)):
-        gesture, confidence, inference_ms = classifier.classify(segment)
-        print(f"inference time: {inference_ms:.2f} ms")
-        print("Predicted:", gesture, "(", confidence, ")")
+    overlay = DpuOverlay(DPU_BIT)
+    hall = GestureClassifier(overlay, DEPLOY_DIR/"hall")
+    flex = GestureClassifier(overlay, DEPLOY_DIR/ "flex")
+    
+    hall_segs = segment_gestures(stream_rows(DEPLOY_DIR / "crumple_and_toss_data.csv", realtime=False))
+    flex_segs = segment_gestures(stream_rows(DEPLOY_DIR / "click_data.csv", realtime=False))
+
+    for hall_seg, flex_seg in zip(hall_segs, flex_segs):
+        for name, classifier, segment, expected in (("hall", hall, hall_seg, "crumple_and_toss"),
+                                         ("flex", flex, flex_seg, "click")):
+            gesture, confidence, inference_ms = classifier.classify(segment)
+            print(f"inference time: {inference_ms:.2f} ms")
+            print(f"Predicted: {gesture} ({confidence}) {'OK' if gesture == expected else 'WRONG'}")
+
 
 
 if __name__ == "__main__":

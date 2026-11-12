@@ -8,7 +8,7 @@ CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 # Fields of a comms SENSOR packet after the "SENSOR" prefix, plus the FireBeetle tag:
 #   SENSOR,sequence,time,ax,ay,az,gx,gy,gz,hall1,hall2,tag
 # The dummy CSVs use the same names in the same order.
-SENSOR_FIELDS = ["sequence", "timestamp", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
+SENSOR_FIELDS = ["sequence", "time", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
 TAGS = {"IDLE", "ACTIVE"}
 
 class States(Enum):
@@ -72,7 +72,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
         start_wall = None
         start_t_ms = None
         for row in reader:
-            t_ms = float(row["timestamp"])
+            t_ms = float(row["time"])
 
             if start_wall is None:
                 start_wall = time.monotonic()

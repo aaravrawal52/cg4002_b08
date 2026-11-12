@@ -14,13 +14,27 @@ from data_ingestion import (
     GestureSegmenter,
 )
 
-from inference import GestureClassifier
+from pynq_dpu import DpuOverlay
+
+from inference import DPU_BIT, GestureClassifier
 
 HOST = "127.0.0.1"
 PORT = 5001
 
 # Version 2: SENSOR and GESTURE lines carry the device ID.
 SUPPORTED_PROTOCOL_VERSION = 2
+
+# Which model each glove uses. Each name is a folder in deploy/
+# holding that model's compiled_model.xmodel, label_map.json and
+# zscore_stats.json.
+#   hall = left hand  (Hall-effect sensors)
+#   flex = right hand (flex sensors)
+# Both gloves send their two finger readings in the hall1/hall2
+# fields, so the packet format is the same for both.
+MODEL_FOR_DEVICE = {
+    "GLOVE_01": "flex",
+    "GLOVE_02": "hall",
+}
 
 
 class GloveSession:
@@ -29,6 +43,8 @@ class GloveSession:
 
     def __init__(self, device_id):
         self.device_id = device_id
+        self.model_name = MODEL_FOR_DEVICE[device_id]
+        self.classifier = classifiers[self.model_name]
         self.expected_sequence = None
         self.segmenter = GestureSegmenter()
         self.packets_received = 0
@@ -93,13 +109,21 @@ sessions = {}
 # DPU MODEL INITIALIZATION
 # ============================================================
 
-print("[ML] Loading DPU model...")
+print("[ML] Loading DPU models...")
 
-classifier = GestureClassifier(
-    deploy_dir=DEPLOY_DIR
-)
+# One overlay on the DPU, with one runner per model
+# (same setup as main() in deploy/inference.py).
+overlay = DpuOverlay(DPU_BIT)
 
-print("[ML] DPU model loaded successfully")
+classifiers = {
+    model_name: GestureClassifier(overlay, DEPLOY_DIR / model_name)
+    for model_name in sorted(set(MODEL_FOR_DEVICE.values()))
+}
+
+for device, model_name in MODEL_FOR_DEVICE.items():
+    print(f"[ML] {device} -> {model_name} model")
+
+print("[ML] DPU models loaded successfully")
 
 invalid_packets = 0
 gesture_sequence = 0
@@ -152,6 +176,18 @@ while True:
 
                     continue
 
+                if device_id not in MODEL_FOR_DEVICE:
+                    print(
+                        f"[SERVER] Unknown device={device_id}: "
+                        "no model assigned in MODEL_FOR_DEVICE"
+                    )
+
+                    conn.sendall(
+                        b"ERROR,UNKNOWN_DEVICE\n"
+                    )
+
+                    continue
+
 
                 # New session for this glove only.
 
@@ -161,6 +197,7 @@ while True:
                 print()
                 print("========== NEW SESSION ==========")
                 print(f"Device:   {device_id}")
+                print(f"Model:    {sessions[device_id].model_name}")
                 print(f"Protocol: {protocol_version}")
                 print("=================================")
                 print()
@@ -379,12 +416,13 @@ while True:
 
                     try:
                         gesture, confidence, inference_ms = (
-                            classifier.classify(segment)
+                            session.classifier.classify(segment)
                         )
 
                         print()
                         print("========== ML PREDICTION ==========")
                         print(f"Device:        {device_id}")
+                        print(f"Model:         {session.model_name}")
                         print(f"Gesture:       {gesture}")
                         print(f"Confidence:    {confidence:.4f}")
                         print(f"DPU time:      {inference_ms:.2f} ms")

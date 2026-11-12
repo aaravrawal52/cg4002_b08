@@ -3,11 +3,11 @@ import csv
 import os
 
 # Change these settings
-SERIAL_PORT = "COM6"  # Change to your ESP32's COM port
+SERIAL_PORT = "COM23"  # Change to your ESP32's COM port
 BAUD_RATE = 115200
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PERSON = "person7"
-ACTION = "pinch_and_rotate"  # Change to your desired action
+PERSON = "person15"
+ACTION = "wiggle_fingers"  # Change to your desired action
 CSV_PATH = os.path.join(SCRIPT_DIR, PERSON, ACTION, ACTION+"_data.csv")
 
 # CSV column headers

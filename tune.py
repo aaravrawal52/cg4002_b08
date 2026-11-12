@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import GroupKFold
 
 from model import build_model
+from train import augment
 import matplotlib.pyplot as plt
 from config import GLOVE, LABEL_MAP_PATH, PREPROCESSED_DIR, BEST_PARAMS_PATH
 
@@ -52,8 +53,10 @@ def objective(trial, X, y, group):
         # zscore_normalization
         mean = X_train.mean(axis=(0, 1))          # one mean per channel, from training people only
         std  = X_train.std(axis=(0, 1))
-        X_train = (X_train - mean) / std
+        # X_train stays in raw units: augmented then normalised per batch below
         X_val = (X_val - mean) / std
+        mean_t = torch.tensor(mean, dtype=torch.float32, device=device).view(1, 8, 1, 1)
+        std_t  = torch.tensor(std,  dtype=torch.float32, device=device).view(1, 8, 1, 1)
 
         train_dataset = torch.utils.data.TensorDataset(to_tensor(X_train), torch.from_numpy(y[train_index]).long())
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -75,6 +78,8 @@ def objective(trial, X, y, group):
             model.train()
             for batch_input, batch_label in train_dataloader:
                 batch_input = batch_input.to(device)
+                batch_input = augment(batch_input)               # raw units
+                batch_input = (batch_input - mean_t) / std_t     # then z-score
                 batch_label = batch_label.to(device)
                 logits = model(batch_input)
                 pred_probab = nn.Softmax(dim=1)(logits)

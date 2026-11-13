@@ -39,3 +39,5 @@ bool gestureCalibrationComplete();
 const char *gestureTypeName(GestureType type);
 
 bool isGestureActive();
+
+bool playGestureSound(GestureType type);

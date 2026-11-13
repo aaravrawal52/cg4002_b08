@@ -8,7 +8,7 @@
 // CONFIGURATION
 // ============================================================
 
-#define GESTURE_DEBUG 1
+#define GESTURE_DEBUG 0
 
 static constexpr float GRAVITY = 9.80665f;
 
@@ -30,7 +30,7 @@ static constexpr size_t FLEX_HISTORY_SIZE =
 static constexpr size_t MAX_SAMPLES =
     MAX_GESTURE_US / SAMPLE_INTERVAL_US + 1;
 
-static constexpr float MIN_MOTION_THRESHOLD = 1.0f;
+static constexpr float MIN_MOTION_THRESHOLD = 2.0f;
 static constexpr float MIN_ROTATION_THRESHOLD = 1.0f;
 static constexpr float MIN_FLEX_THRESHOLD = 20.0f;
 
@@ -691,8 +691,11 @@ static GestureType classifyGesture() {
     unsigned long maxVerticalTime = 0;
     unsigned long minVerticalTime = 0;
 
-    float flexMinimum = 0;
-    float flexMaximum = 0;
+    float flexMinimumIndex = 0;
+    float flexMaximumIndex = 0;
+
+    float flexMinimumMiddle = 0;
+    float flexMaximumMiddle = 0;
 
     float flexStartSum = 0;
     float flexMiddleSum = 0;
@@ -740,30 +743,41 @@ static GestureType classifyGesture() {
         float horizontalAcceleration = worldX;
         float verticalAcceleration = worldZ;
 
-        float flexValue =
-            (sample.flex1 + sample.flex2) * 0.5f;
+        float flexValueIndex =
+            sample.flex2;
+
+        float flexValueMiddle =
+            sample.flex1;
 
         if (i == 0) {
-            flexMinimum = flexValue;
-            flexMaximum = flexValue;
+            flexMinimumIndex = flexValueIndex;
+            flexMaximumIndex = flexValueIndex;
         } else {
-            flexMinimum = fminf(flexMinimum, flexValue);
-            flexMaximum = fmaxf(flexMaximum, flexValue);
+            flexMinimumIndex = fminf(flexMinimumIndex, flexValueIndex);
+            flexMaximumIndex = fmaxf(flexMaximumIndex, flexValueIndex);
+        }
+
+        if (i == 0) {
+            flexMinimumMiddle = flexValueMiddle;
+            flexMaximumMiddle = flexValueMiddle;
+        } else {
+            flexMinimumMiddle = fminf(flexMinimumMiddle, flexValueMiddle);
+            flexMaximumMiddle = fmaxf(flexMaximumMiddle, flexValueMiddle);
         }
 
         if (i < flexSegmentLength) {
-            flexStartSum += flexValue;
+            flexStartSum += flexValueIndex;
         }
 
         if (
             i >= flexMiddleStart &&
             i < flexMiddleStart + flexSegmentLength
         ) {
-            flexMiddleSum += flexValue;
+            flexMiddleSum += flexValueIndex;
         }
 
         if (i >= flexEndStart) {
-            flexEndSum += flexValue;
+            flexEndSum += flexValueIndex;
         }
 
         horizontalEnergy +=
@@ -842,26 +856,14 @@ static GestureType classifyGesture() {
         Serial.print(horizontalAcceleration, 4);
         Serial.print(" vertical_accel=");
         Serial.print(verticalAcceleration, 4);
+        Serial.print(" flex1= ");
+        Serial.print(sample.flex1);
+        Serial.print(" flex2= ");
+        Serial.print(sample.flex2);
         Serial.print(" dt=");
         Serial.println(dt, 5);
     #endif
     }
-
-    #if GESTURE_DEBUG
-    Serial.println("gesture summary:");
-    Serial.print("  samples=");
-    Serial.println(sampleCount);
-    Serial.print("  horizontalEnergy=");
-    Serial.println(horizontalEnergy, 4);
-    Serial.print("  verticalEnergy=");
-    Serial.println(verticalEnergy, 4);
-    Serial.print("  maxHorizontalAcceleration=");
-    Serial.println(maxHorizontalAcceleration, 4);
-    Serial.print("  maxVerticalAcceleration=");
-    Serial.println(maxVerticalAcceleration, 4);
-    Serial.print("  rotationEnergy=");
-    Serial.println(rotationEnergy, 4);
-    #endif
 
     float flexStartMean =
         flexStartSum / flexSegmentLength;
@@ -872,23 +874,29 @@ static GestureType classifyGesture() {
     float flexEndMean =
         flexEndSum / flexSegmentLength;
 
-    float flexRange =
-        flexMaximum - flexMinimum;
+    float flexRangeIndex =
+        flexMaximumIndex - flexMinimumIndex;
 
-    float flexNoiseRange =
-        0.5f * (
-            flex1NoiseThreshold +
-            flex2NoiseThreshold
-        );
+    float flexRangeMiddle =
+        flexMaximumMiddle - flexMinimumMiddle;
+
+    float flexNoiseRangeIndex =
+          1.5*flex2NoiseThreshold;
+
+    float flexNoiseRangeMiddle =
+          1.5*flex1NoiseThreshold;
 
     float flexClosedThreshold =
-        flexMinimum + 0.35f * flexRange;
+        flexMinimumIndex + 0.35f * flexRangeIndex;
 
     float flexOpenThreshold =
-        flexMinimum + 0.65f * flexRange;
+        flexMinimumIndex + 0.65f * flexRangeIndex;
 
-    bool flexDataIsUsable =
-        flexRange > flexNoiseRange;
+    bool flexDataIsUsableIndex =
+        flexRangeIndex > flexNoiseRangeIndex;
+
+    bool flexDataIsUsableMiddle = 
+        flexRangeMiddle > flexNoiseRangeMiddle;
 
     bool startsClosed =
         flexStartMean <= flexClosedThreshold;
@@ -908,12 +916,30 @@ static GestureType classifyGesture() {
     bool endsOpen =
         flexEndMean >= flexOpenThreshold;
 
+    #if GESTURE_DEBUG
+    Serial.println("gesture summary:");
+    Serial.print("  samples=");
+    Serial.println(sampleCount);
+    Serial.print("  horizontalEnergy=");
+    Serial.println(horizontalEnergy, 4);
+    Serial.print("  verticalEnergy=");
+    Serial.println(verticalEnergy, 4);
+    Serial.print("  maxHorizontalAcceleration=");
+    Serial.println(maxHorizontalAcceleration, 4);
+    Serial.print("  maxVerticalAcceleration=");
+    Serial.println(maxVerticalAcceleration, 4);
+    Serial.print("  rotationEnergy=");
+    Serial.println(rotationEnergy, 4);
+    Serial.print(" flex usable= ");
+    Serial.println(flexDataIsUsable);
+    #endif
+
     // --------------------------------------------------------
     // ZOOM DETECTION
     // --------------------------------------------------------
 
     if (
-        flexDataIsUsable &&
+        flexDataIsUsableIndex &&
         rotationEnergy < 4.0f &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f
@@ -932,7 +958,7 @@ static GestureType classifyGesture() {
             middleOpen &&
             endsClosed
         ) {
-            return GestureType::POTENTIAL_ZOOM_OUT;
+            return GestureType::ZOOM_OUT;
         }
 
         if (
@@ -940,7 +966,7 @@ static GestureType classifyGesture() {
             middleClosed &&
             endsOpen
         ) {
-            return GestureType::POTENTIAL_ZOOM_IN;
+            return GestureType::ZOOM_IN;
         }
     }
 
@@ -948,7 +974,8 @@ static GestureType classifyGesture() {
     // ROTATION
     // --------------------------------------------------------
 
-    if (rotationEnergy > 4.0f && !flexDataIsUsable &&
+    if (rotationEnergy > 4.0f && !flexDataIsUsableIndex &&
+        flexDataIsUsableMiddle &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f ) {
         return GestureType::ROTATION;
@@ -959,11 +986,13 @@ static GestureType classifyGesture() {
     // --------------------------------------------------------
 
     if (
-        (horizontalEnergy > 1.0f &&
+        ((horizontalEnergy > 1.0f &&
          verticalEnergy < 1.5f) ||
 
         (verticalEnergy > 1.0f &&
-         horizontalEnergy < 1.0f) && !flexDataIsUsable
+         horizontalEnergy < 1.0f)) 
+         && !flexDataIsUsableIndex
+         && !flexDataIsUsableMiddle
     ) {
 
         if (horizontalEnergy > verticalEnergy) {
@@ -1001,6 +1030,7 @@ static GestureResult finishGesture() {
     result.sampleCount = sampleCount;
     result.type = classifyGesture();
     result.completed = true;
+    playGestureSound(result.type);
 
     gestureActive = false;
     sampleCount = 0;

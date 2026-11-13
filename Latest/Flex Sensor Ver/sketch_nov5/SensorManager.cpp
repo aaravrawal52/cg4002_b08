@@ -48,6 +48,10 @@ bool initializeSensors() {
     pinMode(FLEX_SENSOR_PIN, INPUT);
     pinMode(FLEX_SENSOR_PIN_2, INPUT);
 
+    if (!initializeGestureSound()) {
+        Serial.println("[SOUND] Initialization failed");
+    }
+
     Serial.println(
         "[SENSOR] MPU6050 and flex sensors initialized"
     );

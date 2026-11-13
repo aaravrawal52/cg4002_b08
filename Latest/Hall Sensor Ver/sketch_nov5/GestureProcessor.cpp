@@ -8,7 +8,7 @@
 // CONFIGURATION
 // ============================================================
 
-#define GESTURE_DEBUG 1
+#define GESTURE_DEBUG 0
 
 static constexpr float GRAVITY = 9.80665f;
 
@@ -30,7 +30,7 @@ static constexpr size_t HALL_HISTORY_SIZE =
 static constexpr size_t MAX_SAMPLES =
     MAX_GESTURE_US / SAMPLE_INTERVAL_US + 1;
 
-static constexpr float MIN_MOTION_THRESHOLD = 1.0f;
+static constexpr float MIN_MOTION_THRESHOLD = 2.0f;
 static constexpr float MIN_ROTATION_THRESHOLD = 1.0f;
 static constexpr float MIN_HALL_THRESHOLD = 300.0f;
 
@@ -691,8 +691,11 @@ static GestureType classifyGesture() {
     unsigned long maxVerticalTime = 0;
     unsigned long minVerticalTime = 0;
 
-    float hallMinimum = 0;
-    float hallMaximum = 0;
+    float hallMinimumIndex = 0;
+    float hallMaximumIndex = 0;
+
+    float hallMinimumMiddle = 0;
+    float hallMaximumMiddle = 0;
 
     float hallStartSum = 0;
     float hallMiddleSum = 0;
@@ -740,30 +743,41 @@ static GestureType classifyGesture() {
         float horizontalAcceleration = worldX;
         float verticalAcceleration = worldZ;
 
-        float hallSeparation =
-            (sample.hall2) * 0.5f;
+        float hallSeparationIndex =
+            sample.hall1;
+
+        float hallSeparationMiddle =
+            sample.hall2;
 
         if (i == 0) {
-            hallMinimum = hallSeparation;
-            hallMaximum = hallSeparation;
+            hallMinimumIndex = hallSeparationIndex;
+            hallMaximumIndex = hallSeparationIndex;
         } else {
-            hallMinimum = fminf(hallMinimum, hallSeparation);
-            hallMaximum = fmaxf(hallMaximum, hallSeparation);
+            hallMinimumIndex = fminf(hallMinimumIndex, hallSeparationIndex);
+            hallMaximumIndex = fmaxf(hallMaximumIndex, hallSeparationIndex);
+        }
+
+        if (i == 0) {
+            hallMinimumMiddle = hallSeparationMiddle;
+            hallMaximumMiddle = hallSeparationMiddle;
+        } else {
+            hallMinimumMiddle = fminf(hallMinimumMiddle, hallSeparationMiddle);
+            hallMaximumMiddle = fmaxf(hallMaximumMiddle, hallSeparationMiddle);
         }
 
         if (i < hallSegmentLength) {
-            hallStartSum += hallSeparation;
+            hallStartSum += hallSeparationIndex;
         }
 
         if (
             i >= hallMiddleStart &&
             i < hallMiddleStart + hallSegmentLength
         ) {
-            hallMiddleSum += hallSeparation;
+            hallMiddleSum += hallSeparationIndex;
         }
 
         if (i >= hallEndStart) {
-            hallEndSum += hallSeparation;
+            hallEndSum += hallSeparationIndex;
         }
 
         horizontalEnergy +=
@@ -844,7 +858,7 @@ static GestureType classifyGesture() {
         Serial.print(verticalAcceleration, 4);
         Serial.print(" hall1=");
         Serial.print(sample.hall1);
-        Serial.print(" hall1=");
+        Serial.print(" hall2=");
         Serial.print(sample.hall2);
         Serial.print(" dt=");
         Serial.println(dt, 5);
@@ -861,20 +875,26 @@ static GestureType classifyGesture() {
     float hallEndMean =
         hallEndSum / hallSegmentLength;
 
-    float hallRange =
-        hallMaximum - hallMinimum;
+    float hallRangeIndex =
+        hallMaximumIndex - hallMinimumIndex;
+
+    float hallRangeMiddle =
+        hallMaximumMiddle - hallMinimumMiddle;
 
     float hallNoiseRange =
-        2 * hall2NoiseThreshold;
+        1.5 * hall1NoiseThreshold;
 
     float hallClosedThreshold =
-        hallMinimum + 0.35f * hallRange;
+        hallMinimumIndex + 0.35f * hallRangeIndex;
 
     float hallOpenThreshold =
-        hallMinimum + 0.65f * hallRange;
+        hallMinimumIndex + 0.65f * hallRangeIndex;
 
-    bool hallDataIsUsable =
-        hallRange > hallNoiseRange;
+    bool hallDataIsUsableIndex =
+        hallRangeIndex > hallNoiseRange;
+
+    bool hallDataIsUsableMiddle =
+        hallRangeMiddle > hallNoiseRange;
 
     bool startsClosed =
     
@@ -909,15 +929,17 @@ static GestureType classifyGesture() {
     Serial.println(maxVerticalAcceleration, 4);
     Serial.print("  rotationEnergy=");
     Serial.println(rotationEnergy, 4);
-    Serial.print(" Hall Usable=");
-    Serial.println(hallDataIsUsable);
+    Serial.print(" Hall Usable Index=");
+    Serial.println(hallDataIsUsableIndex);
+    Serial.print(" Hall Usable Middle=");
+    Serial.println(hallDataIsUsableMiddle);
     #endif
     // --------------------------------------------------------
     // ZOOM DETECTION
     // --------------------------------------------------------
 
     if (
-        hallDataIsUsable &&
+        hallDataIsUsableIndex &&
         rotationEnergy < 4.0f &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f
@@ -936,7 +958,7 @@ static GestureType classifyGesture() {
             middleOpen &&
             endsClosed
         ) {
-            return GestureType::POTENTIAL_ZOOM_OUT;
+            return GestureType::ZOOM_OUT;
         }
 
         if (
@@ -944,7 +966,7 @@ static GestureType classifyGesture() {
             middleClosed &&
             endsOpen
         ) {
-            return GestureType::POTENTIAL_ZOOM_IN;
+            return GestureType::ZOOM_IN;
         }
     }
 
@@ -952,7 +974,8 @@ static GestureType classifyGesture() {
     // ROTATION
     // --------------------------------------------------------
 
-    if (rotationEnergy > 4.0f && !hallDataIsUsable &&
+    if (rotationEnergy > 4.0f && !hallDataIsUsableIndex &&
+        !hallDataIsUsableMiddle &&
         horizontalEnergy < 1.0f &&
         verticalEnergy < 1.0f ) {
         return GestureType::ROTATION;
@@ -967,7 +990,9 @@ static GestureType classifyGesture() {
          verticalEnergy < 1.5f) ||
 
         (verticalEnergy > 1.0f &&
-         horizontalEnergy < 1.0f)) && !hallDataIsUsable
+         horizontalEnergy < 1.0f)) 
+         && !hallDataIsUsableIndex
+         && !hallDataIsUsableMiddle
     ) {
 
         if (horizontalEnergy > verticalEnergy) {

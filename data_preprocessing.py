@@ -115,7 +115,7 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
 if __name__ == "__main__":
     label_map = LABEL_MAP_PATH
     window_size = 50
-    TRAIN_VAL_SESSIONS = 6
+    TRAIN_VAL_SESSIONS = 2
     TEST_SESSIONS = 1
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 

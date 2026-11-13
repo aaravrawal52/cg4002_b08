@@ -44,7 +44,7 @@ def objective(trial, X, y, group):
     fold_best_epoch = []
     fold_train_curves = []
     fold_val_curves = []
-    gkf = GroupKFold(n_splits=6)
+    gkf = GroupKFold(n_splits=2)
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 
     for fold, (train_index, val_index) in enumerate(gkf.split(X, y, group)):

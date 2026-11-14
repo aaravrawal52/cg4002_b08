@@ -18,7 +18,7 @@ def to_tensor(X):
 
 def define_model(trial):
     n_conv_layers = trial.suggest_int("n_conv_layers", 1, 3)
-    channels = [trial.suggest_int("out_channels_l{}".format(i), 8, 64) for i in range(n_conv_layers)]
+    channels = [trial.suggest_int("out_channels_l{}".format(i), 10, 60, steps=10) for i in range(n_conv_layers)]
     kernels = [trial.suggest_categorical(f"kernel_size_l{i}", [3, 5, 7]) for i in range(n_conv_layers)]
     with open(LABEL_MAP_PATH) as f:
         num_classes = len(json.load(f))

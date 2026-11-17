@@ -1,0 +1,13 @@
+cat > comms/laptop/test_data/transfer_test.txt <<'EOF'
+CG4002 Communications File Transfer Test
+
+This is the actual file used for the BLE file-transfer demonstration.
+
+The relay laptop reads this file from disk, calculates its MD5 digest,
+transfers the file to the FireBeetle in chunks, and compares the original
+MD5 digest with the MD5 digest calculated by the FireBeetle
+
+gugjgjghhj.
+
+End of test file.
+EOF

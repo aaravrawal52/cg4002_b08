@@ -1,0 +1,4 @@
+MD5 (FireBeetle.zip) = c92c86f018f2ae95610efe02dabe623a
+MD5 (Laptop.zip) = 10c4a097bbcd91c102113379cb7b3e80
+MD5 (Ultra96.zip) = 398493fbd636dedf744c1a3a32bf34fe
+MD5 (visualiser.zip) = e71d4f43f83ebfb894521ff87f7e966c

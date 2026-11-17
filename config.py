@@ -1,6 +1,6 @@
 from pathlib import Path
 
-GLOVE = "hall"                      # change to "flex" for the other hand
+GLOVE = "flex"                      # change to "flex" for the other hand
 
 DATA_DIR         = Path("Data") / GLOVE
 LABEL_MAP_PATH   = DATA_DIR / "label_map.json"

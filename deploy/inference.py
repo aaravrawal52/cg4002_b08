@@ -8,6 +8,7 @@ import time
 
 COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 TARGET_LEN = 50
+CONF_THRESHOLD = 50   # %, below this the gesture is "unknown"
 DEPLOY_DIR = Path(__file__).resolve().parent
 DPU_BIT = "/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq_dpu/dpu.bit"
 
@@ -77,8 +78,12 @@ class GestureClassifier:
         output_data_float = self.output_data[0][0].astype(np.float32)
         logits = output_data_float / self.output_scale
         probabilities = softmax(logits)
+        max_logit = logits[pred_class]
+        confidence = float(np.clip(max_logit / self.zscore_stats["logit_ref"], 0, 1) * 100)
         gesture = self.idx_to_gesture.get(pred_class, "unknown")
-        return gesture, float(probabilities[pred_class]), (t1 - t0) * 1000
+        if confidence < CONF_THRESHOLD:
+            gesture = "unknown"
+        return gesture, confidence, (t1 - t0) * 1000
 
 
 def main():
@@ -87,12 +92,12 @@ def main():
     hall = GestureClassifier(overlay, DEPLOY_DIR/"hall")
     flex = GestureClassifier(overlay, DEPLOY_DIR/ "flex")
     
-    hall_segs = segment_gestures(stream_rows(DEPLOY_DIR / "crumple_and_toss_data.csv", realtime=False))
-    flex_segs = segment_gestures(stream_rows(DEPLOY_DIR / "click_data.csv", realtime=False))
+    hall_segs = segment_gestures(stream_rows(DEPLOY_DIR / "swipe_down_data.csv", realtime=False))
+    flex_segs = segment_gestures(stream_rows(DEPLOY_DIR / "grab_and_release_data.csv", realtime=False))
 
     for hall_seg, flex_seg in zip(hall_segs, flex_segs):
-        for name, classifier, segment, expected in (("hall", hall, hall_seg, "crumple_and_toss"),
-                                         ("flex", flex, flex_seg, "click")):
+        for name, classifier, segment, expected in (("hall", hall, hall_seg, "swipe_down"),
+                                         ("flex", flex, flex_seg, "grab_and_release")):
             gesture, confidence, inference_ms = classifier.classify(segment)
             print(f"inference time: {inference_ms:.2f} ms")
             print(f"Predicted: {gesture} ({confidence}) {'OK' if gesture == expected else 'WRONG'}")

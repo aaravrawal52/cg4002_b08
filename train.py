@@ -106,20 +106,31 @@ if __name__ == "__main__":
     std  = X.std(axis=(0, 1))
     # X = (X - mean) / std
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
-    stats = {c: {"mean": float(m), "std_dev": float(s)}
+    zstats = {c: {"mean": float(m), "std_dev": float(s)}
             for c, m, s in zip(COLUMNS, mean, std)}
     run_dir = MODELS_DIR / datetime.now().strftime("%Y-%m-%d %H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
-    with open(run_dir / "zscore_stats.json", "w") as f:
-        json.dump(stats, f)
     X = np.transpose(X, axes = (0,2,1))
     X = torch.from_numpy(X).float().unsqueeze(2)
     y = torch.from_numpy(y).long()
 
-    
-
     best_state, stats = train_model(X, y, mean, std)
-    
+
+    # Reference for logit confidence: 95th percentile of the max logit on correct, unaugmented predictions
+    model = define_model(stats)
+    model.load_state_dict(best_state)
+    model.eval()
+    mean_t = torch.tensor(mean, dtype=torch.float32).view(1, 8, 1, 1)
+    std_t  = torch.tensor(std,  dtype=torch.float32).view(1, 8, 1, 1)
+    with torch.no_grad():
+        logits = model((X - mean_t) / std_t)
+    max_logit, pred = logits.max(1) # max logit stores the biggest score in each row, pred store which class was the biggest score
+    correct = pred == y
+    zstats["logit_ref"] = float(np.percentile(max_logit[correct].numpy(), 95))
+    print("logit_ref:", zstats["logit_ref"])
+
+    with open(run_dir / "zscore_stats.json", "w") as f:
+        json.dump(zstats, f)
     torch.save(best_state, run_dir / "model.pt")
     with open(run_dir / "best_params.json", "w") as f:
         json.dump(stats, f)

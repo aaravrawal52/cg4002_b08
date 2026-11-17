@@ -1,0 +1,14 @@
+# Host PC: data collection, preprocessing, tuning, training and testing
+# (sensorcollection.py, data_preprocessing.py, tune.py, train.py, test.py, find_threshold.py)
+numpy==2.5.3
+pandas==3.0.5
+torch==2.14.0
+optuna
+scikit-learn
+matplotlib
+pyserial
+pytest
+
+# Not installed with pip here:
+# - vitis_ai/ scripts run inside the Vitis AI 3.5 PyTorch Docker image (provides pytorch_nndct / vai_q_pytorch, vai_c_xir)
+# - deploy/ runs on the Ultra96 PYNQ image (provides pynq, pynq_dpu, VART)

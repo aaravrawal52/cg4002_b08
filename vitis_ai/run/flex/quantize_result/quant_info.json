@@ -1,0 +1,25 @@
+{
+  "param":
+  {
+    "Sequential::0.weight":[[8,6]],
+    "Sequential::0.bias":[[8,7]],
+    "Sequential::5.weight":[[8,7]],
+    "Sequential::5.bias":[[8,8]]
+  },
+  "output":
+  {
+    "Sequential::nndct_input_0":[[8,2]],
+    "Sequential::nndct_relu_2":[[8,2]],
+    "Sequential::nndct_maxpool_3":[[8,2]],
+    "Sequential::nndct_adaptive_avg_pool2d_4":[[8,4]],
+    "Sequential::nndct_dense_6":[[8,1]]
+  },
+  "input":
+  {
+
+  },
+  "fast_finetuned":false,
+  "bias_corrected":true,
+  "version":"3.5.0+60df3f1+torch1.13.1",
+  "graph_md5":"f1dd6837316ff9fbe92ffaca5b26e802"
+}

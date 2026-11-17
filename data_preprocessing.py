@@ -24,18 +24,6 @@ def train_val_test_sessions(DATA_DIR, TRAIN_VAL_SESSIONS, TEST_SESSIONS):
 def raw_csv(recording):
     return next(recording.glob("*_data.csv"))
 
-def fit_zscore_stats(sessions, COLUMNS):
-    combined = pd.concat([pd.read_csv(raw_csv(s)) for s in sessions], ignore_index=True)
-    stats = {c: {"mean": float(np.mean(combined[c])), "std_dev": float(np.std(combined[c]))} for c in COLUMNS}
-    with open("zscore_stats.json", "w") as f:
-        json.dump(stats, f)
-    return stats
-
-def apply_zscore_normalization(df, COLUMNS):
-    with open('zscore_stats.json') as json_file:
-        stats = json.load(json_file)
-    return stats
-
 def label_window(window, df_label):
     """ This function assignes a class to a window, based on the percentage an action takes up in the window.
     The window can be any length (e.g. a gesture segment). Leading IDLE rows (the pre-buffer) are not counted.

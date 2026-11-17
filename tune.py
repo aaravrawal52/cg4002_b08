@@ -18,7 +18,7 @@ def to_tensor(X):
 
 def define_model(trial):
     n_conv_layers = trial.suggest_int("n_conv_layers", 1, 3)
-    channels = [trial.suggest_int("out_channels_l{}".format(i), 10, 60, steps=10) for i in range(n_conv_layers)]
+    channels = [trial.suggest_int("out_channels_l{}".format(i), 10, 60, step=10) for i in range(n_conv_layers)]
     kernels = [trial.suggest_categorical(f"kernel_size_l{i}", [3, 5, 7]) for i in range(n_conv_layers)]
     with open(LABEL_MAP_PATH) as f:
         num_classes = len(json.load(f))
@@ -45,7 +45,6 @@ def objective(trial, X, y, group):
     fold_train_curves = []
     fold_val_curves = []
     gkf = GroupKFold(n_splits=2)
-    COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
 
     for fold, (train_index, val_index) in enumerate(gkf.split(X, y, group)):
         print(fold, np.unique(group[val_index]))
@@ -82,8 +81,6 @@ def objective(trial, X, y, group):
                 batch_input = (batch_input - mean_t) / std_t     # then z-score
                 batch_label = batch_label.to(device)
                 logits = model(batch_input)
-                pred_probab = nn.Softmax(dim=1)(logits)
-                y_pred = pred_probab.argmax(1)
                 loss = loss_criterion(logits, batch_label)
                 running_loss += loss.item()
                 optimizer.zero_grad()

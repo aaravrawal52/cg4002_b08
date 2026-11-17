@@ -72,8 +72,6 @@ def train_model(X, y, mean, std):
     lr = stats["lr"]
     optimizer = optim.Adam(model.parameters(), lr= lr)
     loss_criterion = nn.CrossEntropyLoss()
-    best_loss = 1000
-    best_epoch = 1
 
     for epoch in range(num_epochs):
         running_loss = 0
@@ -86,8 +84,6 @@ def train_model(X, y, mean, std):
             batch_input = (batch_input - mean_t) / std_t
             batch_label = batch_label.to(device)
             logits = model(batch_input)
-            pred_probab = nn.Softmax(dim=1)(logits)
-            y_pred = pred_probab.argmax(1)
             loss = loss_criterion(logits, batch_label)
             running_loss += loss.item()
             optimizer.zero_grad()

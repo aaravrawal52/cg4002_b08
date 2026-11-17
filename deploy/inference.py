@@ -29,12 +29,6 @@ def normalize_window(window, stats, columns):
         arr[:, i] = (arr[:, i] - stats[c]["mean"]) / stats[c]["std_dev"]
     return arr
 
-def softmax(values):
-    values_diff = values - np.max(values)
-    exp_values = np.exp(values_diff)
-    exp_values_sum = np.sum(exp_values)
-    return exp_values/exp_values_sum
-
 class GestureClassifier:
     """Loads the DPU and model once; classify() is then called for each finished segment."""
     def __init__(self, overlay, model_dir):
@@ -77,7 +71,6 @@ class GestureClassifier:
 
         output_data_float = self.output_data[0][0].astype(np.float32)
         logits = output_data_float / self.output_scale
-        probabilities = softmax(logits)
         max_logit = logits[pred_class]
         confidence = float(np.clip(max_logit / self.zscore_stats["logit_ref"], 0, 1) * 100)
         gesture = self.idx_to_gesture.get(pred_class, "unknown")

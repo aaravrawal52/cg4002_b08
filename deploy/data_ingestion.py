@@ -85,26 +85,6 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
 
             yield row
 
-def segment_windows(data_path, window_size, realtime=True):
-    """This function segments the stream with 50% overlap between each window.
-
-    args:
-    - window_size: size of each window
-    - realtime: pace the read to match stream_rows' recorded timing
-
-    returns:
-    cb.buffer: segmented window of data from firebeetle
-    """
-    cb = CircularBuffer(window_size)
-    since_last_window = 0
-    stride = window_size // 2
-    for row in stream_rows(data_path, realtime=realtime):
-        cb.append(row)
-        since_last_window += 1
-        if cb.count == window_size and since_last_window >= stride:
-            since_last_window = 0
-            yield cb.get()
-
 class GestureSegmenter:
     '''Acts as state machine. Push-style: feed one row at a time with add_row().'''
     MAX_SEGMENT = 250
@@ -153,11 +133,3 @@ def segment_gestures(rows):
         segment = segmenter.add_row(row)
         if segment is not None:
             yield segment
-
-
-
-if __name__ == "__main__":
-    data_path = 'dummy_dataset_tagged/unittest_raw.csv'
-    window_size = 50
-    for window in segment_windows(data_path, window_size):
-        print(window)

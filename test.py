@@ -14,8 +14,6 @@ def load_split(npz_path, run_dir):
     data = np.load(npz_path)
     X, y = data["X"], data["y"]
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
-    row_values = []
-    X_normalized = []
     with open(Path(run_dir) / "zscore_stats.json") as f:
         stats = json.load(f)
     mean = np.array([stats[c]["mean"] for c in COLUMNS])

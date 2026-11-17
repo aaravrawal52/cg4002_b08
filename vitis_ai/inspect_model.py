@@ -1,17 +1,24 @@
 # inspect_model.py
 import json
+import sys
+from pathlib import Path
 import torch
 from pytorch_nndct import Inspector
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for model.py
 from model import build_model
 
-with open("run/best_params.json") as f:
+# usage: python inspect_model.py hall|flex
+GLOVE = sys.argv[1]
+RUN_DIR = Path("run") / GLOVE
+
+with open(RUN_DIR / "best_params.json") as f:
     params = json.load(f)
 
-with open("run/label_map.json") as f:
+with open(RUN_DIR / "label_map.json") as f:
     num_classes = len(json.load(f))
 
 model = build_model(params["channels"], params["kernels"], num_classes)
-model.load_state_dict(torch.load("run/model.pt", map_location="cpu"))
+model.load_state_dict(torch.load(RUN_DIR / "model.pt", map_location="cpu"))
 model.eval()
 
 dummy_input = torch.randn(1, 8, 1, 50)  # (windows, channels, additional direction, window_size)

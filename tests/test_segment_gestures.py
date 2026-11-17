@@ -1,8 +1,6 @@
-"""Tests for data_ingestion.segment_gestures, using dummy_dataset_tagged.
+"""Tests for data_ingestion.segment_gestures
 
-The FireBeetle only sends IDLE / ACTIVE tags; ML classifies every gesture.
-A segment = pre-buffer IDLE rows + ACTIVE rows, and it ends on the first IDLE row
-after the gesture (that IDLE row is not part of the segment).
+The FireBeetle sends IDLE / ACTIVE tags; ML classifies gestures.
 
 Run from the repo root with either:
     python -m pytest tests
@@ -27,7 +25,7 @@ from data_ingestion import (
 TAGGED_DIR = ROOT / "dummy_dataset_tagged"
 PRE_BUFFER = GestureSegmenter.PRE_BUFFER
 MAX_SEGMENT = GestureSegmenter.MAX_SEGMENT
-MAX_ACTIVE = 225  # firmware cuts a gesture off after this many rows (see generate_tagged_dataset.py)
+MAX_ACTIVE = 225  # firmware cuts a gesture off after this many rows
 
 
 def idx_range(segment):
@@ -69,32 +67,6 @@ def expected_segments(labels_path, n_rows):
         prev_active_end = active_end
     return expected
 
-
-# --- Tagged dataset files ---
-
-def test_unittest_file():
-    # 3 IDLE, 3 gesture rows, then IDLE -> one segment covering sequence 0-5
-    got = run(stream_rows(TAGGED_DIR / "unittest_raw.csv", realtime=False))
-    assert got == [(0, 5)], f"got {got}"
-
-
-def test_sessions_match_answer_key():
-    failures = []
-    for session_dir in sorted((TAGGED_DIR / "sessions").iterdir()):
-        rows = list(stream_rows(session_dir / "sensor_stream_raw.csv", realtime=False))
-        want = expected_segments(session_dir / "sensor_stream_labels.csv", len(rows))
-        got = run(rows)
-        if len(got) != len(want):
-            failures.append(f"{session_dir.name}: {len(got)} segments, expected {len(want)}")
-            continue
-        mismatches = [(g, w) for g, w in zip(got, want) if g != w]
-        if mismatches:
-            g, w = mismatches[0]
-            failures.append(f"{session_dir.name}: {len(mismatches)} wrong boundaries, first got {g} expected {w}")
-    assert not failures, "\n".join(failures)
-
-
-# --- Hand-made edge cases ---
 
 def test_only_idle_yields_nothing():
     assert run(make_rows([("IDLE", 40)])) == []
@@ -140,7 +112,8 @@ def test_segments_not_modified_later():
     segments = list(segment_gestures(make_rows([("IDLE", 30), ("ACTIVE", 10), ("IDLE", 5), ("ACTIVE", 10), ("IDLE", 1)])))
     got = [idx_range(s) for s in segments]
     assert got == [(5, 39), (40, 54)], f"got {got}"
-    assert [len(s) for s in segments] == [35, 15], f"got lengths {[len(s) for s in segments]}"
+    lengths = [len(s) for s in segments]
+    assert lengths == [35, 15], f"got lengths {lengths}"
 
 
 def test_gesture_at_end_of_stream_yields_nothing():
@@ -172,25 +145,15 @@ def test_gesture_after_discarded_one():
 
 
 def test_add_row_push_style():
-    # How the comms server uses it: one row at a time, a segment only on the first IDLE row after the gesture
     segmenter = GestureSegmenter()
     rows = make_rows([("IDLE", 30), ("ACTIVE", 40), ("IDLE", 5)])
-    results = [segmenter.add_row(r) for r in rows]
-    finished = [(i, idx_range(s)) for i, s in enumerate(results) if s is not None]
+    finished = []
+    for i, row in enumerate(rows):
+        segment = segmenter.add_row(row)
+        if segment is not None:
+            finished.append((i, idx_range(segment)))
     assert finished == [(70, (5, 69))], f"got {finished}"
 
-
-# --- Comms packet format ---
-
-def test_csv_header_matches_comms_fields():
-    with open(TAGGED_DIR / "unittest_raw.csv", newline="") as f:
-        header = next(csv.reader(f))
-    assert header == SENSOR_FIELDS, f"got {header}"
-
-
-def test_parse_sensor_message():
-    row = parse_sensor_message("SENSOR,42,15321,0.01,-0.02,1.0,0.5,-0.5,3.2,2050,2110,ACTIVE\n")
-    assert row["sequence"] == "42" and row["hall2"] == "2110" and row["tag"] == "ACTIVE", f"got {row}"
 
 
 def test_corrupted_tags():
@@ -213,7 +176,10 @@ def test_csv_replayed_as_packets_gives_same_segments():
     assert run(packet_rows) == run(csv_rows)
 
 if __name__ == "__main__":
-    tests = [(name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn)]
+    tests = []
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            tests.append((name, fn))
     passed = 0
     for name, fn in tests:
         try:

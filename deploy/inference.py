@@ -20,11 +20,28 @@ def load_zscore_stats(path):
 def load_idx_to_gesture(path):
     with open(path) as f:
         action_map = json.load(f)
-    return {v: k for k, v in action_map.items()}
+    idx_to_gesture = {}
+    for gesture, index in action_map.items():
+        idx_to_gesture[index] = gesture
+    return idx_to_gesture
 
 def normalize_window(window, stats, columns):
-    """window: list of dict-like rows from a segment. Returns (n, 8) float32."""
-    arr = np.array([[float(row[c]) for c in columns] for row in window], dtype=np.float32)
+    """
+    args: 
+    - window: list of dict-like rows from a segment. 
+    - stats: mean and std_dev of training dataset
+    - columns: columns in the dataset
+
+    returns: 
+    - (n, 8) float32
+    """
+    values = []
+    for row in window:
+        row_values = []
+        for c in columns:
+            row_values.append(float(row[c]))
+        values.append(row_values)
+    arr = np.array(values, dtype=np.float32)
     for i, c in enumerate(columns):
         arr[:, i] = (arr[:, i] - stats[c]["mean"]) / stats[c]["std_dev"]
     return arr
@@ -33,7 +50,6 @@ class GestureClassifier:
     """Loads the DPU and model once; classify() is then called for each finished segment."""
     def __init__(self, overlay, model_dir):
         model_dir = Path(model_dir)
-        # Keep the overlay on self: if it's garbage collected, the runner's DPU resources are freed (segfault)
         self.overlay = overlay
         self.overlay.load_model(str(model_dir / "compiled_model.xmodel"))
         self.runner = self.overlay.runner
@@ -55,8 +71,13 @@ class GestureClassifier:
         self.output_data = [np.empty(output_shape, dtype=np.int8)]
 
     def classify(self, segment):
-        """segment: list of rows from GestureSegmenter / segment_gestures.
-        Returns (gesture name, confidence, DPU inference time in ms)."""
+        """
+        args:
+        - segment: list of rows from GestureSegmenter
+
+        returns: 
+        - (gesture name, confidence, DPU inference time in ms).
+        """
         norm = normalize_window(segment, self.zscore_stats, COLUMNS)
         norm_resampled = resample_segment(norm, TARGET_LEN)
         quantized = np.clip(np.round(norm_resampled * self.input_scale), -128, 127).astype(np.int8)
@@ -93,7 +114,11 @@ def main():
                                          ("flex", flex, flex_seg, "grab_and_release")):
             gesture, confidence, inference_ms = classifier.classify(segment)
             print(f"inference time: {inference_ms:.2f} ms")
-            print(f"Predicted: {gesture} ({confidence}) {'OK' if gesture == expected else 'WRONG'}")
+            if gesture == expected:
+                result = "OK"
+            else:
+                result = "WRONG"
+            print(f"Predicted: {gesture} ({confidence}) {result}")
 
 
 

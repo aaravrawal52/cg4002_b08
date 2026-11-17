@@ -52,13 +52,14 @@ def define_model(stats):
     return build_model(channels, kernels, num_classes)
 
 def train_model(X, y, mean, std):
-    """
-    Uses the optimized hyperparameters to train the model
-    """
+    """Uses the optimized hyperparameters to train the model."""
     with open(BEST_PARAMS_PATH) as json_file:
         stats = json.load(json_file)
 
-    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    if torch.accelerator.is_available():
+        device = torch.accelerator.current_accelerator().type
+    else:
+        device = "cpu"
     print(f"Using {device} device")
     model = define_model(stats).to(device)
 
@@ -80,7 +81,7 @@ def train_model(X, y, mean, std):
         model.train()
         for batch_input, batch_label in dataloader:
             batch_input = batch_input.to(device)
-            batch_input = augment(batch_input)               # raw units
+            batch_input = augment(batch_input) # raw units
             batch_input = (batch_input - mean_t) / std_t
             batch_label = batch_label.to(device)
             logits = model(batch_input)
@@ -98,9 +99,8 @@ def train_model(X, y, mean, std):
 if __name__ == "__main__":
     train_val_data = np.load(PREPROCESSED_DIR / 'train_val_data.npz')
     X, y = train_val_data['X'], train_val_data['y']
-    mean = X.mean(axis=(0, 1))          # one mean per channel, from training people only
+    mean = X.mean(axis=(0, 1))
     std  = X.std(axis=(0, 1))
-    # X = (X - mean) / std
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
     zstats = {c: {"mean": float(m), "std_dev": float(s)}
             for c, m, s in zip(COLUMNS, mean, std)}
@@ -130,5 +130,5 @@ if __name__ == "__main__":
     torch.save(best_state, run_dir / "model.pt")
     with open(run_dir / "best_params.json", "w") as f:
         json.dump(stats, f)
-    # test/quantize/inspect read the class count from here, so it always matches these weights
+
     shutil.copy(LABEL_MAP_PATH, run_dir / "label_map.json")

@@ -4,12 +4,15 @@ from pytorch_nndct.apis import torch_quantizer
 import torch
 from pathlib import Path
 from sklearn.metrics import classification_report, confusion_matrix
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for model.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from model import build_model
 import numpy as np
 import json
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
 
 parser = argparse.ArgumentParser()
 
@@ -66,7 +69,9 @@ def quantization():
     
     with open(model_dir / 'label_map.json') as f:
         label_map = json.load(f)
-    class_names = [n for n, i in sorted(label_map.items(), key=lambda kv: kv[1])]
+    class_names = [None] * len(label_map)   # class_names[index] = gesture name
+    for name, index in label_map.items():
+        class_names[index] = name
     num_classes = len(class_names)
 
     model = build_model(best_params["channels"], best_params["kernels"], num_classes)
@@ -92,15 +97,12 @@ def quantization():
             inspector.inspect(quant_model, (dummy_input,), device=device)
             sys.exit()
     else:
-        ## new api
-        ####################################################################################
         out_dir = str(model_dir / "quantize_result")
 
         quantizer = torch_quantizer(
             quant_mode, model, (dummy_input), device=device, quant_config_file=None, output_dir=out_dir)
 
         quant_model = quantizer.quant_model
-        #####################################################################################
 
     if deploy:
         X, y = X_test[:1], y_test[:1]
@@ -129,10 +131,21 @@ def evaluate(X, y, quant_model, class_names):
     print(classification_report(y, pred, zero_division=0))
     print("confusion matrix (rows=true, cols=pred):")
     cm = confusion_matrix(y, pred, labels=idx)
-    width = max(len(n) for n in class_names)
-    print(" " * width + " " + "".join(f"{i:>4}" for i in idx))      # column header: class numbers
+    width = 0
+    for name in class_names:
+        width = max(width, len(name))
+
+    header = " " * width + " "      # column header: class numbers
+    for i in idx:
+        header += f"{i:>4}"
+    print(header)
+
     for i, row in enumerate(cm):
-        print(f"{class_names[i]:>{width}} " + "".join(f"{v:>4}" for v in row) + f"   ({i})")
+        line = f"{class_names[i]:>{width}} "
+        for count in row:
+            line += f"{count:>4}"
+        line += f"   ({i})"
+        print(line)
 
 
 if __name__ == '__main__':

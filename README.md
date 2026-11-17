@@ -1,8 +1,4 @@
-# cg4002_b08
-
-README.md for AI code
-
-AR computer code: gesture recognition for two sensor gloves, trained in PyTorch and run on the DPU of an Ultra96 FPGA board.
+# README.md for AI code
 
 Each glove streams 8 channels (accelerometer `ax ay az`, gyroscope `gx gy gz`, finger sensors `hall1 hall2`) tagged `ACTIVE`/`IDLE` by the FireBeetle. One model is trained per glove:
 
@@ -65,15 +61,15 @@ Set `SERIAL_PORT`, `GLOVE`, `PERSON` and `ACTION` at the top of `sensorcollectio
 python sensorcollection.py
 ```
 
-Each gesture is recorded as 20 repetitions. Each glove folder also needs a `label_map.json` (gesture name → class index).
+Each gesture is recorded as 20 repetitions, one gesture per folder: `Data/<glove>/<person>/<gesture>/`. The folder name is the training label, so it must match a key in the glove's `label_map.json` (gesture name → class index). Folders not in the label map are skipped.
 
-### 2. Generate labels
+### 2. Check the recordings (optional)
 
 ```bash
 python Data/make_labels.py Data/<glove>
 ```
 
-Writes `label.csv` next to each recording and warns about recordings without 20 repetitions, junk lines or out-of-order sequence numbers.
+Warns about recordings without 20 repetitions, junk lines or out-of-order sequence numbers, and writes a `label.csv` (one row per ACTIVE/IDLE run) next to each recording for inspection. Training does not read `label.csv`.
 
 ### 3. Select the glove
 
@@ -89,7 +85,7 @@ GLOVE = "hall"   # or "flex"
 python data_preprocessing.py
 ```
 
-Writes `preprocessed_data/<glove>/train_val_data.npz` and `test_data.npz`. The people are split by `TRAIN_VAL_SESSIONS` / `TEST_SESSIONS` in the `__main__` block.
+Splits every recording into gesture segments using the ACTIVE/IDLE tags (the same `GestureSegmenter` as on the board), resamples each segment to 50 rows and labels it with its folder's gesture. Writes `preprocessed_data/<glove>/train_val_data.npz` and `test_data.npz`. The people are split by `TRAIN_VAL_SESSIONS` / `TEST_SESSIONS` in the `__main__` block.
 
 ### 5. Tune hyperparameters
 
@@ -153,21 +149,13 @@ deploy/<glove>/zscore_stats.json       ← models/<glove>/<timestamp>/zscore_sta
 deploy/<glove>/label_map.json          ← models/<glove>/<timestamp>/label_map.json
 ```
 
-Copy `deploy/` to the board (scp creates no missing parent directories, so create the destination first), then on the board run with the PYNQ Python environment:
+Copy `deploy/` to the board, then on the board run with the PYNQ Python environment:
 
 ```bash
 python3 inference.py
 ```
 
-`main()` replays `swipe_down_data.csv` (hall) and `grab_and_release_data.csv` (flex) through the segmenter and both models, printing the prediction, confidence and DPU time for each gesture. For live use, the comms code creates a `GestureClassifier` per glove and calls `classify(segment)` for each finished segment. A result of `unknown` should trigger no action.
-
-## Tests
-
-```bash
-pytest tests/
-```
-
-The segmentation tests read `dummy_dataset_tagged/`, which is not committed.
+`main()` replays `swipe_down_data.csv` (hall) and `grab_and_release_data.csv` (flex) through the segmenter and both models, printing the prediction, confidence and DPU time for each gesture. For live use, the comms code creates a `GestureClassifier` per glove and calls `classify(segment)` for each finished segment.
 
 ## Notes
 

@@ -1,7 +1,6 @@
 # Host PC: data collection, preprocessing, tuning, training and testing
 # (sensorcollection.py, data_preprocessing.py, tune.py, train.py, test.py, find_threshold.py)
 numpy==2.5.3
-pandas==3.0.5
 torch==2.14.0
 optuna
 scikit-learn

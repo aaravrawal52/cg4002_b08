@@ -18,8 +18,12 @@ def to_tensor(X):
 
 def define_model(trial):
     n_conv_layers = trial.suggest_int("n_conv_layers", 1, 3)
-    channels = [trial.suggest_int("out_channels_l{}".format(i), 10, 60, step=10) for i in range(n_conv_layers)]
-    kernels = [trial.suggest_categorical(f"kernel_size_l{i}", [3, 5, 7]) for i in range(n_conv_layers)]
+    channels = []
+    for i in range(n_conv_layers):
+        channels.append(trial.suggest_int(f"out_channels_l{i}", 10, 60, step=10))
+    kernels = []
+    for i in range(n_conv_layers):
+        kernels.append(trial.suggest_categorical(f"kernel_size_l{i}", [3, 5, 7]))
     with open(LABEL_MAP_PATH) as f:
         num_classes = len(json.load(f))
     return build_model(channels, kernels, num_classes)
@@ -31,7 +35,10 @@ def objective(trial, X, y, group):
     returns:
     - best_vloss: for Optuna to compare across diff trials and rank the trials
     """
-    device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+    if torch.accelerator.is_available():
+        device = torch.accelerator.current_accelerator().type
+    else:
+        device = "cpu"
     print(f"Using {device} device")
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
 
@@ -52,14 +59,16 @@ def objective(trial, X, y, group):
         # zscore_normalization
         mean = X_train.mean(axis=(0, 1))          # one mean per channel, from training people only
         std  = X_train.std(axis=(0, 1))
-        # X_train stays in raw units: augmented then normalised per batch below
+
         X_val = (X_val - mean) / std
         mean_t = torch.tensor(mean, dtype=torch.float32, device=device).view(1, 8, 1, 1)
         std_t  = torch.tensor(std,  dtype=torch.float32, device=device).view(1, 8, 1, 1)
 
-        train_dataset = torch.utils.data.TensorDataset(to_tensor(X_train), torch.from_numpy(y[train_index]).long())
+        y_train = torch.from_numpy(y[train_index]).long()
+        y_val = torch.from_numpy(y[val_index]).long()
+        train_dataset = torch.utils.data.TensorDataset(to_tensor(X_train), y_train)
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_dataset = torch.utils.data.TensorDataset(to_tensor(X_val), torch.from_numpy(y[val_index]).long())
+        val_dataset = torch.utils.data.TensorDataset(to_tensor(X_val), y_val)
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
         model = define_model(trial).to(device)
@@ -97,8 +106,6 @@ def objective(trial, X, y, group):
                     running_vloss += vloss.item()
             avg_training_loss = running_loss / len(train_dataloader)
             avg_vloss = running_vloss / len(val_dataloader)
-            # print ("training loss: ", avg_training_loss)
-            # print ("validation loss: ", avg_vloss)
             train_curve.append(avg_training_loss)
             val_curve.append(avg_vloss)
 
@@ -113,7 +120,7 @@ def objective(trial, X, y, group):
                     break
         fold_train_curves.append(train_curve)
         fold_val_curves.append(val_curve)
-        fold_best_vlosses.append(best_vloss) # append avg train loss for the fold
+        fold_best_vlosses.append(best_vloss)
         fold_best_epoch.append(best_epoch)
         mean_so_far = np.mean(fold_best_vlosses)
         trial.report(mean_so_far, fold)
@@ -137,7 +144,10 @@ if __name__ == "__main__":
         study_name=f"gesture_{GLOVE}",
         load_if_exists=True,
     )
-    study.optimize(lambda trial: objective(trial, X, y, group), n_trials=100)
+    def run_trial(trial):
+        return objective(trial, X, y, group)
+
+    study.optimize(run_trial, n_trials=100)
 
     pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
     complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])

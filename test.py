@@ -31,7 +31,9 @@ def evaluate(run_dir):
 
     with open(run_dir / 'label_map.json') as f:
         label_map = json.load(f)
-    class_names = [n for n, i in sorted(label_map.items(), key=lambda kv: kv[1])]
+    class_names = [None] * len(label_map)   # class_names[index] = gesture name
+    for name, index in label_map.items():
+        class_names[index] = name
     num_classes = len(class_names)
 
     model = build_model(cfg["channels"], cfg["kernels"], num_classes)
@@ -48,12 +50,22 @@ def evaluate(run_dir):
     idx = list(range(len(class_names)))
     print(classification_report(y_test, y_pred, zero_division=0))
     print("confusion matrix (rows=true, cols=pred):")
-    # print(confusion_matrix(y_test, y_pred))
     cm = confusion_matrix(y_test, y_pred, labels=idx)
-    width = max(len(n) for n in class_names)
-    print(" " * width + " " + "".join(f"{i:>4}" for i in idx))      # column header: class numbers
+    width = 0
+    for name in class_names:
+        width = max(width, len(name))
+
+    header = " " * width + " "      # column header: class numbers
+    for i in idx:
+        header += f"{i:>4}"
+    print(header)
+
     for i, row in enumerate(cm):
-        print(f"{class_names[i]:>{width}} " + "".join(f"{v:>4}" for v in row) + f"   ({i})")
+        line = f"{class_names[i]:>{width}} "
+        for count in row:
+            line += f"{count:>4}"
+        line += f"   ({i})"
+        print(line)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

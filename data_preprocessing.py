@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from data_ingestion import segment_gestures, stream_rows
 from deploy.resample import resample_segment
@@ -10,60 +9,38 @@ from config import DATA_DIR, LABEL_MAP_PATH, PREPROCESSED_DIR
 
 def list_sessions(person_dir):
     person_dir = Path(person_dir)
-    return sorted(person for person in person_dir.iterdir())
+    return sorted(person_dir.iterdir())
 
 def train_val_test_sessions(DATA_DIR, TRAIN_VAL_SESSIONS, TEST_SESSIONS):
     def recordings(people):
-        return [r for person in people for r in list_sessions(Path(DATA_DIR) / person)]
-    people = sorted(p.name for p in Path(DATA_DIR).iterdir() if p.is_dir())
+        sessions = []
+        for person in people:
+            sessions.extend(list_sessions(Path(DATA_DIR) / person))
+        return sessions
+
+    people = []
+    for p in Path(DATA_DIR).iterdir():
+        if p.is_dir():
+            people.append(p.name)
+    people.sort()
+
     train_val_sessions = people[:TRAIN_VAL_SESSIONS]
     test_sessions = people[TRAIN_VAL_SESSIONS:]
-    # return train_sessions, val_sessions, test_sessions
     return recordings(train_val_sessions), recordings(test_sessions)
 
 def raw_csv(recording):
-    return next(recording.glob("*_data.csv"))
+    csv_files = list(recording.glob("*_data.csv"))
+    return csv_files[0]
 
-def label_window(window, df_label):
-    """ This function assignes a class to a window, based on the percentage an action takes up in the window.
-    The window can be any length (e.g. a gesture segment). Leading IDLE rows (the pre-buffer) are not counted.
-
-    args:
-    - window
-    - df_label: dataframe containing the labelled gesture class corresponding to the respective indexes from raw data
-
-    returns:
-    - most_likely_class: the class assigned to the window
-    """
-    class_counter = [0] * len(action_map)
-    # Skip the pre-buffer: start counting at the first non-IDLE row (or the first row if there is none)
-    first_active = next((i for i, row in enumerate(window) if row["tag"] != "IDLE"), 0)
-    window_start_idx = int(window[first_active]["sequence"])
-    window_end_idx = int(window[-1]["sequence"]) + 1
-    length = window_end_idx - window_start_idx
-    overlap = df_label[
-        (df_label["start_idx"] < window_end_idx) & (df_label["end_idx"] > window_start_idx)
-    ]
-    THRESHOLD = 70
-    for index, row in overlap.iterrows():
-        lo = max(row["start_idx"], window_start_idx)
-        hi = min(row["end_idx"], window_end_idx)
-        percentage_overlap = (hi - lo) / length * 100
-
-        class_counter[row["action_class"]] += percentage_overlap
-    
-    most_likely_class = class_counter.index(max(class_counter))
-    if class_counter[most_likely_class] >= THRESHOLD:
-        return most_likely_class
-
-def build_dataset(sessions, window_size, COLUMNS, mode):
+def build_dataset(sessions, COLUMNS, mode):
     """
     Preprocess dataset:
-    - label windows
-    
+    - split each recording into gesture segments (ACTIVE/IDLE tags) and resample them to TARGET_LEN rows
+    - label every segment with the recording's gesture: each folder Data/<glove>/<person>/<gesture>/
+
     returns:
-    - X: list of windows
-    - y: list of action class for each window
+    - X: list of resampled segments
+    - y: list of action class for each segment
     """
     TARGET_LEN = 50
     X = []
@@ -72,18 +49,14 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
     for session in sessions:
         print("mode: ", mode)
         print("session: ", session)
-        instance_label = Path(session)/'label.csv'
+        gesture = Path(session).name
+        if gesture not in action_map:
+            print("  skipped: gesture not in label_map.json")
+            continue
+        label = action_map[gesture]
         instance_raw = raw_csv(session)
-        df = pd.read_csv(instance_raw)
-        df_label = pd.read_csv(instance_label)
-
-        df_label = df_label[df_label["gesture"].isin(action_map)].copy()
-        df_label["action_class"] = df_label["gesture"].map(action_map).astype(int)
 
         for segment in segment_gestures(stream_rows(instance_raw, realtime=False)):
-            label = label_window(segment, df_label)
-            if label is None:
-                continue
             window_values = []
             for row in segment:
                 row_values =[]
@@ -102,7 +75,6 @@ def build_dataset(sessions, window_size, COLUMNS, mode):
 
 if __name__ == "__main__":
     label_map = LABEL_MAP_PATH
-    window_size = 50
     TRAIN_VAL_SESSIONS = 2
     TEST_SESSIONS = 1
     COLUMNS = ["ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2"]
@@ -112,8 +84,8 @@ if __name__ == "__main__":
 
     train_val_sessions, test_sessions = train_val_test_sessions(DATA_DIR, TRAIN_VAL_SESSIONS, TEST_SESSIONS)
     
-    X_train_val, y_train_val, group_train_val = build_dataset(train_val_sessions, window_size, COLUMNS, "train_val")
-    X_test, y_test, group_test = build_dataset(test_sessions, window_size, COLUMNS, "test")
+    X_train_val, y_train_val, group_train_val = build_dataset(train_val_sessions, COLUMNS, "train_val")
+    X_test, y_test, group_test = build_dataset(test_sessions, COLUMNS, "test")
 
     # save training into file for training.py to load
     PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)

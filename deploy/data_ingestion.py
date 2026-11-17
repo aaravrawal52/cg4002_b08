@@ -5,9 +5,6 @@ from enum import Enum
 
 CSV_PATH = Path(__file__).parent / "dummy_dataset_tagged" / "unittest_raw.csv"
 
-# Fields of a comms SENSOR packet after the "SENSOR" prefix, plus the FireBeetle tag:
-#   SENSOR,sequence,time,ax,ay,az,gx,gy,gz,hall1,hall2,tag
-# The dummy CSVs use the same names in the same order.
 SENSOR_FIELDS = ["sequence", "time", "ax", "ay", "az", "gx", "gy", "gz", "hall1", "hall2", "tag"]
 TAGS = {"IDLE", "ACTIVE"}
 
@@ -31,7 +28,11 @@ class CircularBuffer:
             self.count += 1
 
     def get(self):
-        return [self.buffer[(self.start + i) % self.size] for i in range(self.count)]
+        items = []
+        for i in range(self.count):
+            index = (self.start + i) % self.size   # wrap around past the end of the buffer
+            items.append(self.buffer[index])
+        return items
     
     def clear(self):
         self.buffer = [None] * self.size
@@ -39,24 +40,25 @@ class CircularBuffer:
         self.count = 0
 
 def parse_sensor_message(message):
-    """Turn one comms line 'SENSOR,sequence,...,tag' into a row dict, keyed like the CSV rows."""
+    """Turn one comms packet into a row dict, keyed like the CSV rows."""
     parts = message.strip().split(",")
     if parts[0] != "SENSOR":
         raise ValueError(f"Unknown packet type: {parts[0]}")
     if len(parts) != len(SENSOR_FIELDS) + 1:
         raise ValueError(f"Expected {len(SENSOR_FIELDS) + 1} fields, got {len(parts)}")
     row = dict(zip(SENSOR_FIELDS, parts[1:]))
-    # if row["tag"] not in TAGS:
-    #     raise ValueError(f"Unknown tag: {row['tag']}")
     return row
 
 def format_sensor_message(row):
-    """Inverse of parse_sensor_message, e.g. to replay a CSV as comms packets."""
-    return "SENSOR," + ",".join(str(row[f]) for f in SENSOR_FIELDS) + "\n"
+    """Inverse of parse_sensor_message: to replay a CSV as comms packets."""
+    values = []
+    for field in SENSOR_FIELDS:
+        values.append(str(row[field]))
+    return "SENSOR," + ",".join(values) + "\n"
 
 def stream_rows(csv_path=CSV_PATH, realtime=True):
-    """Yield rows from the raw sensor CSV for
-    simulating the live inference path.
+    """
+    Yield rows from the raw sensor CSV for simulating the live inference path.
 
     args:
     - realtime=True: paced to match the time (ms) intervals recorded in the file
@@ -86,7 +88,7 @@ def stream_rows(csv_path=CSV_PATH, realtime=True):
             yield row
 
 class GestureSegmenter:
-    '''Acts as state machine. Push-style: feed one row at a time with add_row().'''
+    """Acts as state machine. Push-style: feed one row at a time with add_row()."""
     MAX_SEGMENT = 250
     PRE_BUFFER = 25
 
@@ -127,7 +129,7 @@ class GestureSegmenter:
         return None
 
 def segment_gestures(rows):
-    '''Pull-style wrapper around GestureSegmenter: yields every finished segment from an iterable of rows.'''
+    """Yields every finished segment from an iterable of rows."""
     segmenter = GestureSegmenter()
     for row in rows:
         segment = segmenter.add_row(row)

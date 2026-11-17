@@ -173,7 +173,7 @@ uint32_t updateCRC32(
     for (int bit = 0; bit < 8; bit++) {
       if (crc & 1) {
         crc = (crc >> 1) ^ 0xEDB88320;
-      } else {
+      } else { 
         crc >>= 1;
       }
     }

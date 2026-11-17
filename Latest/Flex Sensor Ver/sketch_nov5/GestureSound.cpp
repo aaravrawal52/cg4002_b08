@@ -37,6 +37,8 @@ constexpr Note LEFT[] = {{2000, 100}, {0, 65}, {2000, 100}, {0, 60}};
 constexpr Note RIGHT[] = {
     {3500, 70}, {0, 50}, {3500, 70}, {0, 50}, {3500, 70}, {0, 60}
 };
+constexpr Note ZOOM_IN[] = {{1600, 110}, {0, 50}, {2400, 180}, {0, 60}};
+constexpr Note ZOOM_OUT[] = {{2400, 110}, {0, 50}, {1600, 180}, {0, 60}};
 constexpr Note UNKNOWN[] = {{1500, 350}, {0, 60}};
 
 template <size_t N>
@@ -48,6 +50,8 @@ Melody selectMelody(GestureType type) {
         case GestureType::SWIPE_DOWN:   return melodyFor(DOWN);
         case GestureType::SWIPE_LEFT:   return melodyFor(LEFT);
         case GestureType::SWIPE_RIGHT:  return melodyFor(RIGHT);
+        case GestureType::ZOOM_IN:      return melodyFor(ZOOM_IN);
+        case GestureType::ZOOM_OUT:     return melodyFor(ZOOM_OUT);
         case GestureType::UNRECOGNIZED: return melodyFor(UNKNOWN);
         default:                       return {nullptr, 0};
     }

@@ -14,7 +14,7 @@ static constexpr float GRAVITY = 9.80665f;
 
 static constexpr unsigned long SAMPLE_INTERVAL_US = 14286;
 static constexpr unsigned long MAX_GESTURE_US = 2500000;
-static constexpr unsigned long QUIET_TIME_US = 180000;
+static constexpr unsigned long QUIET_TIME_US = 250000;
 
 static constexpr size_t CALIBRATION_SAMPLES = 70;
 

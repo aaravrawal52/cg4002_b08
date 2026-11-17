@@ -14,7 +14,7 @@ static constexpr float GRAVITY = 9.80665f;
 
 static constexpr unsigned long SAMPLE_INTERVAL_US = 14286;
 static constexpr unsigned long MAX_GESTURE_US = 2500000;
-static constexpr unsigned long QUIET_TIME_US = 180000;
+static constexpr unsigned long QUIET_TIME_US = 250000;
 
 static constexpr size_t CALIBRATION_SAMPLES = 70;
 
@@ -881,8 +881,11 @@ static GestureType classifyGesture() {
     float hallRangeMiddle =
         hallMaximumMiddle - hallMinimumMiddle;
 
-    float hallNoiseRange =
+    float hallNoiseRangeIndex =
         1.5 * hall1NoiseThreshold;
+
+    float hallNoiseRangeMiddle =
+        1.5 * hall2NoiseThreshold;
 
     float hallClosedThreshold =
         hallMinimumIndex + 0.35f * hallRangeIndex;
@@ -891,13 +894,12 @@ static GestureType classifyGesture() {
         hallMinimumIndex + 0.65f * hallRangeIndex;
 
     bool hallDataIsUsableIndex =
-        hallRangeIndex > hallNoiseRange;
+        hallRangeIndex > hallNoiseRangeIndex;
 
     bool hallDataIsUsableMiddle =
-        hallRangeMiddle > hallNoiseRange;
+        hallRangeMiddle > hallNoiseRangeMiddle;
 
     bool startsClosed =
-    
         hallStartMean <= hallClosedThreshold;
 
     bool startsOpen =

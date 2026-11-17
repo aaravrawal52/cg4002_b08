@@ -1,0 +1,259 @@
+{
+  "repetitions": 3,
+  "exitGesture": "SWIPE_LEFT",
+  "returnHoldSeconds": 3,
+  "buttonHoldSeconds": 3,
+  "choice": {
+    "heading": "WELCOME",
+    "subheading": "How would you like to start?",
+    "tutorialTitle": "Tutorial\nMode",
+    "tutorialCaption": "Learn the {total} hand gestures, then try them on real screens",
+    "freeTitle": "Free\nMode",
+    "freeCaption": "Go straight to the visualiser",
+    "hint": "Tap a button.  In goggles, point at it and click."
+  },
+  "messages": {
+    "watch": "WATCH AND COPY",
+    "stepLabel": "GESTURE {step} OF {total}",
+    "practiseLabel": "PRACTISE",
+    "applyLabel": "WHAT IT DOES",
+    "practise": "{perform}\nDo it correctly {required} times with either hand. Each success fills the bar under that hand.",
+    "apply": "Well done! {usage}\nDo the gesture once more to continue.",
+    "correct": "Correct  {count} / {required}",
+    "wrong": "Not quite: that was {gesture}",
+    "learned": "Got it!",
+    "next": "Next gesture",
+    "completeLabel": "TUTORIAL COMPLETE",
+    "completeTitle": "Congratulations!",
+    "complete": "You have practised every gesture and used them on real screens. Point at the bar on the left edge for {hold} seconds whenever you want to come back.",
+    "completeHint": "<<  Swipe left to enter free mode",
+    "notConnected": "Gesture receiver offline · gestures can't be detected",
+    "handLeft": "LEFT",
+    "handRight": "RIGHT",
+    "handHidden": "not in view",
+    "returnLabel": "TUTORIAL",
+    "returnHint": "Keep pointing  {seconds} s",
+    "skip": "Skip Gesture",
+    "exit": "Exit Tutorial",
+    "guideLabel": "GUIDE {guide} OF {guides}  ·  STEP {action} OF {actions}",
+    "guideDone": "DONE",
+    "guideWatch": "USE THIS GESTURE",
+    "skipGuide": "Skip Guide",
+    "holdTip": "Point for {dwell} s to press",
+    "holdCountdown": "{button}  ·  {seconds} s"
+  },
+  "steps": [
+    {
+      "gesture": "CLICK",
+      "video": "click",
+      "title": "Click",
+      "perform": "Start with an open palm. Point your index finger and push it forward, as if pressing a button, then open your hand again.",
+      "usage": "Click selects whatever your hand points at: a menu choice, a button, or an app's main action such as starting a timer or flipping a flashcard."
+    },
+    {
+      "gesture": "SWIPE_RIGHT",
+      "video": "swipe_right",
+      "title": "Swipe right",
+      "perform": "With an open palm, sweep your hand quickly to the right and bring it back.",
+      "usage": "Swipe right moves to the next item: the next flashcard, photo, menu choice or timer look. While rotating a screen it turns it clockwise."
+    },
+    {
+      "gesture": "SWIPE_LEFT",
+      "video": "swipe_left",
+      "title": "Swipe left",
+      "perform": "With an open palm, sweep your hand quickly to the left and bring it back.",
+      "usage": "Swipe left moves to the previous item. While rotating a screen it turns it anticlockwise. It also takes you out of this tutorial at the end."
+    },
+    {
+      "gesture": "SWIPE_UP",
+      "video": "swipe_up",
+      "title": "Swipe up",
+      "perform": "With an open palm, sweep your hand quickly upwards and bring it back.",
+      "usage": "Swipe up means more: it raises a timer digit, reveals a flashcard answer, scrolls the photo library and makes a screen larger while resizing."
+    },
+    {
+      "gesture": "SWIPE_DOWN",
+      "video": "swipe_down",
+      "title": "Swipe down",
+      "perform": "With an open palm, sweep your hand quickly downwards and bring it back.",
+      "usage": "Swipe down means less: it lowers a timer digit, hides a flashcard answer, scrolls back and makes a screen smaller while resizing."
+    },
+    {
+      "gesture": "GRAB_AND_RELEASE",
+      "video": "grab_and_release",
+      "title": "Grab and release",
+      "perform": "Close your open hand as if grabbing something in the air, then open it again.",
+      "usage": "Grab and release creates a screen on an empty flat surface or confirms an edit. If you marked a screen red with Crumple and toss, point at that same screen and Grab to confirm deletion."
+    },
+    {
+      "gesture": "CRUMPLE_AND_TOSS",
+      "video": "crumple_and_toss",
+      "title": "Crumple and toss",
+      "perform": "Squeeze your hand into a fist, as if crumpling paper, then throw it forwards and open your hand.",
+      "usage": "Crumple and toss cancels an edit or marks a pointed screen with a red aura. To delete the red screen, point at it and do Grab and release. Another action cancels the mark."
+    },
+    {
+      "gesture": "PINCH_AND_DRAG",
+      "video": "pinch_and_drag",
+      "title": "Pinch and drag",
+      "perform": "Pinch your thumb and fingers together, drag your hand sideways while holding the pinch, then let go.",
+      "usage": "Pinch and drag picks up the screen you point at. Aim at a new flat surface, then grab and release to put it down."
+    },
+    {
+      "gesture": "PINCH_AND_PULL",
+      "video": "pinch_and_pull",
+      "title": "Pinch and pull",
+      "perform": "Pinch your thumb and fingers together, pull your hand towards you, then let go.",
+      "usage": "Pinch and pull selects a screen for resizing. Swipe up or down to change its size, then grab and release to keep it."
+    },
+    {
+      "gesture": "PINCH_AND_ROTATE",
+      "video": "pinch_and_rotate",
+      "title": "Pinch and rotate",
+      "perform": "Pinch your thumb and fingers together, twist your wrist as if turning a dial, then let go.",
+      "usage": "Pinch and rotate selects a screen on a table or floor for turning. Swipe left or right to rotate it, then grab and release to keep it."
+    },
+    {
+      "gesture": "POINT_AND_ROTATE",
+      "video": "point_and_rotate",
+      "title": "Point and rotate",
+      "perform": "Point with your index finger, twist your wrist to draw a small turn in the air, then open your hand.",
+      "usage": "Point and rotate turns a web browser or PDF screen vertical, like holding a phone upright, and the page lays itself out again. Do it again to turn it back."
+    },
+    {
+      "gesture": "WIGGLE_FINGERS",
+      "video": "wiggle_fingers",
+      "title": "Wiggle fingers",
+      "perform": "Hold your open hand still and wiggle all your fingers for a moment.",
+      "usage": "Wiggle fingers opens the settings of the screen you point at: choose app, move, resize, rotate or delete. Do it again to close them."
+    }
+  ],
+  "guides": [
+    {
+      "title": "Place and delete a screen",
+      "steps": [
+        {
+          "goal": "screen.placed",
+          "video": "grab_and_release",
+          "title": "Place a screen",
+          "text": "Point at an empty wall, table or floor. When the ray turns green, do Grab and release to put a screen there."
+        },
+        {
+          "goal": "screen.deleted",
+          "video": "crumple_and_toss",
+          "title": "Delete the screen",
+          "text": "Point at the screen and do Crumple and toss to mark it red. Keep pointing at that screen and do Grab and release to delete it. Pointing away cannot confirm deletion."
+        }
+      ]
+    },
+    {
+      "title": "Resize a screen",
+      "steps": [
+        {
+          "goal": "screen.exists",
+          "skipIfMet": true,
+          "video": "grab_and_release",
+          "title": "First, place a screen to resize",
+          "text": "Point at an empty wall, table or floor. When the ray turns green, do Grab and release."
+        },
+        {
+          "goal": "edit.resize",
+          "video": "pinch_and_pull",
+          "title": "Select the screen for resizing",
+          "text": "Point at the screen and do Pinch and pull. A blue glow around it shows that it is ready to resize."
+        },
+        {
+          "goal": "screen.resized",
+          "video": "swipe_up",
+          "title": "Change its size",
+          "text": "Swipe up makes the screen larger and Swipe down makes it smaller. Swipe as many times as you like."
+        },
+        {
+          "goal": "edit.kept",
+          "video": "grab_and_release",
+          "title": "Keep the new size",
+          "text": "Do Grab and release to keep this size. Crumple and toss would cancel and bring back the old size."
+        }
+      ]
+    },
+    {
+      "title": "Rotate a screen on a table or floor",
+      "steps": [
+        {
+          "goal": "screen.flat",
+          "skipIfMet": true,
+          "video": "grab_and_release",
+          "title": "First, place a screen on a table or the floor",
+          "text": "Only screens lying on a horizontal surface can rotate. Point at an empty table top or the floor and do Grab and release."
+        },
+        {
+          "goal": "edit.rotate",
+          "video": "pinch_and_rotate",
+          "title": "Select the flat screen for rotating",
+          "text": "Point at the screen on the table or floor and do Pinch and rotate. A pink glow shows that it is ready to turn."
+        },
+        {
+          "goal": "screen.rotated",
+          "video": "swipe_right",
+          "title": "Turn it",
+          "text": "Swipe right turns the screen clockwise and Swipe left turns it anticlockwise, a few degrees each time."
+        },
+        {
+          "goal": "edit.kept",
+          "video": "grab_and_release",
+          "title": "Keep the new angle",
+          "text": "Do Grab and release to keep this angle. Crumple and toss would cancel and turn it back."
+        }
+      ]
+    },
+    {
+      "title": "Open the screen settings",
+      "steps": [
+        {
+          "goal": "screen.exists",
+          "skipIfMet": true,
+          "video": "grab_and_release",
+          "title": "First, place a screen",
+          "text": "Point at an empty wall, table or floor. When the ray turns green, do Grab and release."
+        },
+        {
+          "goal": "settings.open",
+          "video": "wiggle_fingers",
+          "title": "Open the settings",
+          "text": "Point at a screen and do Wiggle fingers. Its settings appear: choose app, move, resize, rotate and delete. Swipes move the highlight and Click chooses."
+        },
+        {
+          "goal": "settings.closed",
+          "video": "wiggle_fingers",
+          "title": "Close the settings",
+          "text": "Do Wiggle fingers again to close the settings without choosing anything. Crumple and toss closes them too."
+        }
+      ]
+    },
+    {
+      "title": "Turn a screen vertical and back",
+      "steps": [
+        {
+          "goal": "app.browser",
+          "skipIfMet": true,
+          "setup": "browser",
+          "video": "grab_and_release",
+          "title": "First, place an empty screen",
+          "text": "Vertical mode is for the web browser and PDF viewer. Place a new screen with Grab and release and the tutorial opens the web browser on it for you."
+        },
+        {
+          "goal": "screen.vertical",
+          "video": "point_and_rotate",
+          "title": "Turn the screen vertical",
+          "text": "The web browser is open on a screen. Point at it and do Point and rotate. The screen stands upright and the page lays itself out again."
+        },
+        {
+          "goal": "screen.horizontal",
+          "video": "point_and_rotate",
+          "title": "Turn it back",
+          "text": "Do Point and rotate at the same screen again to return it to its wide shape."
+        }
+      ]
+    }
+  ]
+}

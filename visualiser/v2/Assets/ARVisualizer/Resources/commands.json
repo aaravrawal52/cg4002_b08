@@ -1,0 +1,1075 @@
+{
+  "version": 3,
+  "transport": {
+    "protocol": "UDP",
+    "port": 7777,
+    "encoding": "UTF-8 JSON",
+    "example": {
+      "id": "unique-request-id",
+      "command": "left.ui.click",
+      "token": ""
+    }
+  },
+  "notes": [
+    "Each command has left and right variants. Unprefixed commands default to the right hand.",
+    "Alternative packet: {\"command\":\"ui.click\",\"hand\":\"left\"}. Conflicting hand selectors are rejected.",
+    "Left/right hand is separate from left/right mouse click: left.ui.rightclick means the left hand performs a right-click.",
+    "Placement, movement, adjustment and menus belong to a hand. A screen being adjusted, moved or browsed by one hand cannot be acquired by the other.",
+    "Shared commands affect the app or shared screen collection regardless of the issuing hand.",
+    "Marker IDs determine left/right identity permanently. Normal centre fallback waits through brief marker tracking gaps; missing markers never borrow the other hand ray.",
+    "hand.calibrate is retained as a compatibility status check for the selected root marker. Change marker IDs in the Unity Inspector to change the physical setup.",
+    "Use a fresh id per action. Retry with the same id and socket; commands are deduplicated.",
+    "appGestures override free-mode gestures only while pointing at the open app face. Timer digits: 10 min / 1 min / 10 sec / 1 sec. Settings, move, place and menus keep their existing controls. Explicit commands are never remapped.",
+    "Eleven gestures: aliases swipt_left/swipt_right and wriggle_fingers are accepted. Legacy zoom_in/out still work but are not shown in the gesture panel.",
+    "Grab confirms an active edit, selects a menu item, performs the app primary action, or creates a screen on a valid blank surface. Crumple cancels an edit, goes back in a menu, or deletes a pointed screen. It never creates a screen.",
+    "Resize and rotate lock the selected screen for that hand. Grab keeps changes; crumple restores the original size and rotation. Move keeps the old anchor until confirmed. Starting a move confirms earlier size/rotation edits.",
+    "Timer left/right selects a digit per hand; up/down changes that digit. Without selection, up/down uses the pointed digit (or minutes). Library up swipes scroll forward; down scrolls backward.",
+    "Hide the debug HUD to reveal the right-edge gesture guide strip. Point at it to open the guide; point away to dismiss. Works in normal and stereo goggle mode."
+  ],
+  "commands": [
+    {
+      "command": "pointer.on",
+      "category": "Pointer",
+      "description": "Enable this hand ray.",
+      "scope": "hand",
+      "left": {
+        "command": "left.pointer.on"
+      },
+      "right": {
+        "command": "right.pointer.on"
+      },
+      "aliases": []
+    },
+    {
+      "command": "pointer.off",
+      "category": "Pointer",
+      "description": "Disable this hand ray; fingertip touch remains active. Rejected in goggles.",
+      "scope": "hand",
+      "left": {
+        "command": "left.pointer.off"
+      },
+      "right": {
+        "command": "right.pointer.off"
+      },
+      "aliases": []
+    },
+    {
+      "command": "hand.calibrate",
+      "category": "Marker tracking",
+      "description": "Check that this hand root marker is tracked. IDs determine handedness; this compatibility command never reassigns markers.",
+      "scope": "hand",
+      "left": {
+        "command": "left.hand.calibrate"
+      },
+      "right": {
+        "command": "right.hand.calibrate"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.click",
+      "category": "Input",
+      "description": "Left-click at this hand ray.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.click"
+      },
+      "right": {
+        "command": "right.ui.click"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.rightclick",
+      "category": "Input",
+      "description": "Right-click at this hand ray, or go back in its menu.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.rightclick"
+      },
+      "right": {
+        "command": "right.ui.rightclick"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.press",
+      "category": "Input",
+      "description": "Hold this hand ray on a menu; move up/down to scroll.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.press"
+      },
+      "right": {
+        "command": "right.ui.press"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.release",
+      "category": "Input",
+      "description": "Release this hand menu press.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.release"
+      },
+      "right": {
+        "command": "right.ui.release"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.choose",
+      "category": "Apps",
+      "description": "Open the app chooser on the screen this hand points at.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.choose"
+      },
+      "right": {
+        "command": "right.app.choose"
+      },
+      "aliases": []
+    },
+    {
+      "command": "place.enter",
+      "category": "Placement",
+      "description": "Show surfaces and start this hand placement preview.",
+      "scope": "hand",
+      "left": {
+        "command": "left.place.enter"
+      },
+      "right": {
+        "command": "right.place.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "place.exit",
+      "category": "Placement",
+      "description": "Cancel this hand placement or move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.place.exit"
+      },
+      "right": {
+        "command": "right.place.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.place",
+      "category": "Placement",
+      "description": "Place a screen at this hand target, or confirm its active move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.place"
+      },
+      "right": {
+        "command": "right.screen.place"
+      },
+      "aliases": [
+        "cube.place"
+      ]
+    },
+    {
+      "command": "move.enter",
+      "category": "Move",
+      "description": "Select this hand adjusted or pointed screen to move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.enter"
+      },
+      "right": {
+        "command": "right.move.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "move.confirm",
+      "category": "Move",
+      "description": "Move the selected screen to this hand surface target.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.confirm"
+      },
+      "right": {
+        "command": "right.move.confirm"
+      },
+      "aliases": []
+    },
+    {
+      "command": "move.cancel",
+      "category": "Move",
+      "description": "Cancel this hand move, retaining the original screen position.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.cancel"
+      },
+      "right": {
+        "command": "right.move.cancel"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.enter",
+      "category": "Adjust",
+      "description": "Select this hand pointed screen for adjustment.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.enter"
+      },
+      "right": {
+        "command": "right.adjust.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.exit",
+      "category": "Adjust",
+      "description": "Release this hand adjusted screen.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.exit"
+      },
+      "right": {
+        "command": "right.adjust.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.grow",
+      "category": "Adjust",
+      "description": "Grow this hand selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.grow"
+      },
+      "right": {
+        "command": "right.adjust.grow"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.shrink",
+      "category": "Adjust",
+      "description": "Shrink this hand selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.shrink"
+      },
+      "right": {
+        "command": "right.adjust.shrink"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.rotate.cw",
+      "category": "Adjust",
+      "description": "Rotate this hand selected screen clockwise by one step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.rotate.cw"
+      },
+      "right": {
+        "command": "right.adjust.rotate.cw"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.rotate.ccw",
+      "category": "Adjust",
+      "description": "Rotate this hand selected screen anticlockwise by one step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.rotate.ccw"
+      },
+      "right": {
+        "command": "right.adjust.rotate.ccw"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.undo",
+      "category": "Screens",
+      "description": "Cancel this hand pending move/placement; otherwise delete the most recently placed screen.",
+      "scope": "shared screens",
+      "left": {
+        "command": "left.screen.undo"
+      },
+      "right": {
+        "command": "right.screen.undo"
+      },
+      "aliases": [
+        "cube.undo"
+      ]
+    },
+    {
+      "command": "screens.clear",
+      "category": "Screens",
+      "description": "Delete all screens and cancel both hands pending placements and moves.",
+      "scope": "shared",
+      "left": {
+        "command": "left.screens.clear"
+      },
+      "right": {
+        "command": "right.screens.clear"
+      },
+      "aliases": [
+        "cubes.clear"
+      ]
+    },
+    {
+      "command": "goggle.enter",
+      "category": "Display",
+      "description": "Enter stereo goggles; both hand rays are locked on.",
+      "scope": "shared",
+      "left": {
+        "command": "left.goggle.enter"
+      },
+      "right": {
+        "command": "right.goggle.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "goggle.exit",
+      "category": "Display",
+      "description": "Return to normal display and restore each hand pointer switch.",
+      "scope": "shared",
+      "left": {
+        "command": "left.goggle.exit"
+      },
+      "right": {
+        "command": "right.goggle.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "status",
+      "category": "Status",
+      "description": "Read this hand target/modes and snapshots of both hands.",
+      "scope": "hand",
+      "left": {
+        "command": "left.status"
+      },
+      "right": {
+        "command": "right.status"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.context",
+      "category": "Screens",
+      "description": "Exit this hand screen settings; otherwise delete the pointed screen or place a new screen on a valid blank flat surface. Requires the pointer. Never deletes the newest screen as a fallback.",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.context"
+      },
+      "right": {
+        "command": "right.screen.context"
+      },
+      "aliases": []
+    },
+    {
+      "command": "settings.enter",
+      "category": "Adjust",
+      "description": "Select the pointed screen for this hand and show its settings in normal mode. Repeated calls retain the selection.",
+      "scope": "hand",
+      "left": {
+        "command": "left.settings.enter"
+      },
+      "right": {
+        "command": "right.settings.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "settings.grow",
+      "category": "Adjust",
+      "description": "Enter settings for the pointed screen if needed, then grow the selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.settings.grow"
+      },
+      "right": {
+        "command": "right.settings.grow"
+      },
+      "aliases": []
+    },
+    {
+      "command": "settings.shrink",
+      "category": "Adjust",
+      "description": "Enter settings for the pointed screen if needed, then shrink the selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.settings.shrink"
+      },
+      "right": {
+        "command": "right.settings.shrink"
+      },
+      "aliases": []
+    },
+    {
+      "command": "media.next",
+      "category": "Media",
+      "description": "In free mode, display the next photo/video on the pointed screen. Uses library order (newest first), wraps at the end, and starts at the first item for a black screen. Acknowledges the load request; final status appears in the HUD.",
+      "scope": "hand",
+      "left": {
+        "command": "left.media.next"
+      },
+      "right": {
+        "command": "right.media.next"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.increase",
+      "category": "Screen apps",
+      "description": "Timer: add the step shown on the pointed digit; pauses countdown.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.increase"
+      },
+      "right": {
+        "command": "right.app.increase"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.decrease",
+      "category": "Screen apps",
+      "description": "Timer: subtract the step shown on the pointed digit; pauses countdown.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.decrease"
+      },
+      "right": {
+        "command": "right.app.decrease"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.startpause",
+      "category": "Screen apps",
+      "description": "Timer: start or pause the pointed timer.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.startpause"
+      },
+      "right": {
+        "command": "right.app.startpause"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.reset",
+      "category": "Screen apps",
+      "description": "Timer: stop and restore the last edited duration.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.reset"
+      },
+      "right": {
+        "command": "right.app.reset"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.previous",
+      "category": "Screen apps",
+      "description": "Select the previous/next timer digit for this hand, or navigate German flashcards.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.previous"
+      },
+      "right": {
+        "command": "right.app.previous"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.next",
+      "category": "Screen apps",
+      "description": "Select the previous/next timer digit for this hand, or navigate German flashcards.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.next"
+      },
+      "right": {
+        "command": "right.app.next"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.reveal",
+      "category": "Screen apps",
+      "description": "German flashcards: show the English meaning.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.reveal"
+      },
+      "right": {
+        "command": "right.app.reveal"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.hide",
+      "category": "Screen apps",
+      "description": "German flashcards: hide the English meaning.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.hide"
+      },
+      "right": {
+        "command": "right.app.hide"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.back",
+      "category": "Gestures",
+      "description": "Cancel edit / back / delete screen",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.back"
+      },
+      "right": {
+        "command": "right.gesture.back"
+      },
+      "aliases": []
+    },
+    {
+      "command": "edit.resize",
+      "category": "Gestures",
+      "description": "Resize: swipe up / down",
+      "scope": "hand",
+      "left": {
+        "command": "left.edit.resize"
+      },
+      "right": {
+        "command": "right.edit.resize"
+      },
+      "aliases": []
+    },
+    {
+      "command": "edit.rotate",
+      "category": "Gestures",
+      "description": "Rotate: swipe left / right",
+      "scope": "hand",
+      "left": {
+        "command": "left.edit.rotate"
+      },
+      "right": {
+        "command": "right.edit.rotate"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.options",
+      "category": "Gestures",
+      "description": "Open / close screen options",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.options"
+      },
+      "right": {
+        "command": "right.screen.options"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.primary",
+      "category": "Gestures",
+      "description": "Create / confirm / primary action",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.primary"
+      },
+      "right": {
+        "command": "right.gesture.primary"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.up",
+      "category": "Gestures",
+      "description": "Increase / reveal / scroll",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.up"
+      },
+      "right": {
+        "command": "right.gesture.up"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.down",
+      "category": "Gestures",
+      "description": "Decrease / hide / scroll",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.down"
+      },
+      "right": {
+        "command": "right.gesture.down"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.left",
+      "category": "Gestures",
+      "description": "Previous / select / rotate left",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.left"
+      },
+      "right": {
+        "command": "right.gesture.left"
+      },
+      "aliases": []
+    },
+    {
+      "command": "gesture.right",
+      "category": "Gestures",
+      "description": "Next / select / rotate right",
+      "scope": "hand",
+      "left": {
+        "command": "left.gesture.right"
+      },
+      "right": {
+        "command": "right.gesture.right"
+      },
+      "aliases": []
+    },
+    {
+      "command": "edit.confirm",
+      "category": "Gestures",
+      "description": "Keep the selected screen size and rotation and leave editing.",
+      "scope": "hand",
+      "left": {
+        "command": "left.edit.confirm"
+      },
+      "right": {
+        "command": "right.edit.confirm"
+      },
+      "aliases": []
+    },
+    {
+      "command": "edit.cancel",
+      "category": "Gestures",
+      "description": "Restore the size and rotation from before editing.",
+      "scope": "hand",
+      "left": {
+        "command": "left.edit.cancel"
+      },
+      "right": {
+        "command": "right.edit.cancel"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.delete",
+      "category": "Gestures",
+      "description": "Delete the pointed available screen. Never creates a screen.",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.delete"
+      },
+      "right": {
+        "command": "right.screen.delete"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.create",
+      "category": "Gestures",
+      "description": "Create a screen on a valid blank flat surface without entering place mode.",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.create"
+      },
+      "right": {
+        "command": "right.screen.create"
+      },
+      "aliases": []
+    },
+    {
+      "command": "media.previous",
+      "category": "Gestures",
+      "description": "Display the previous accessible photo/video, wrapping at the library boundary.",
+      "scope": "hand",
+      "left": {
+        "command": "left.media.previous"
+      },
+      "right": {
+        "command": "right.media.previous"
+      },
+      "aliases": []
+    },
+    {
+      "command": "media.browse",
+      "category": "Gestures",
+      "description": "Open the photo library for the pointed Photos screen.",
+      "scope": "hand",
+      "left": {
+        "command": "left.media.browse"
+      },
+      "right": {
+        "command": "right.media.browse"
+      },
+      "aliases": []
+    },
+    {
+      "command": "media.primary",
+      "category": "Gestures",
+      "description": "Play/pause a video or browse the library for a photo.",
+      "scope": "hand",
+      "left": {
+        "command": "left.media.primary"
+      },
+      "right": {
+        "command": "right.media.primary"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.primary",
+      "category": "Gestures",
+      "description": "Timer start/pause or flashcard flip.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.primary"
+      },
+      "right": {
+        "command": "right.app.primary"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.back",
+      "category": "Gestures",
+      "description": "Close the active menu or cancel media loading.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.back"
+      },
+      "right": {
+        "command": "right.menu.back"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.select",
+      "category": "Gestures",
+      "description": "Activate the selected menu item; otherwise use the pointed item.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.select"
+      },
+      "right": {
+        "command": "right.menu.select"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.up",
+      "category": "Gestures",
+      "description": "Move up a menu or scroll the library forward one row.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.up"
+      },
+      "right": {
+        "command": "right.menu.up"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.down",
+      "category": "Gestures",
+      "description": "Move down a menu or scroll the library backward one row.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.down"
+      },
+      "right": {
+        "command": "right.menu.down"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.left",
+      "category": "Gestures",
+      "description": "Select the previous menu item.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.left"
+      },
+      "right": {
+        "command": "right.menu.left"
+      },
+      "aliases": []
+    },
+    {
+      "command": "menu.right",
+      "category": "Gestures",
+      "description": "Select the next menu item.",
+      "scope": "hand",
+      "left": {
+        "command": "left.menu.right"
+      },
+      "right": {
+        "command": "right.menu.right"
+      },
+      "aliases": []
+    }
+  ],
+  "gestures": [
+    {
+      "gesture": "CRUMPLE_AND_TOSS",
+      "command": "gesture.back",
+      "guide": "Cancel edit / back / delete screen",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "crumple_and_toss",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "crumple_and_toss",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "PINCH_AND_PULL",
+      "command": "edit.resize",
+      "guide": "Resize: swipe up / down",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_pull",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_pull",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "PINCH_AND_DRAG",
+      "command": "move.enter",
+      "guide": "Move: aim at a new surface",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_drag",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_drag",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "PINCH_AND_ROTATE",
+      "command": "edit.rotate",
+      "guide": "Rotate: swipe left / right",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_rotate",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "pinch_and_rotate",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "POINT_AND_ROTATE",
+      "command": "screen.options",
+      "guide": "Open / close screen options",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "point_and_rotate",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "point_and_rotate",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "GRAB_AND_RELEASE",
+      "command": "gesture.primary",
+      "guide": "Create / confirm / primary action",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "grab_and_release",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "grab_and_release",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "WIGGLE_FINGERS",
+      "command": "ui.click",
+      "guide": "Click the button under the ray",
+      "aliases": [
+        "WRIGGLE_FINGERS"
+      ],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "wiggle_fingers",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "wiggle_fingers",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "SWIPE_UP",
+      "command": "gesture.up",
+      "guide": "Increase / reveal / scroll",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "swipe_up",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "swipe_up",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "SWIPE_DOWN",
+      "command": "gesture.down",
+      "guide": "Decrease / hide / scroll",
+      "aliases": [],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "swipe_down",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "swipe_down",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "SWIPE_LEFT",
+      "command": "gesture.left",
+      "guide": "Previous / select / rotate left",
+      "aliases": [
+        "SWIPT_LEFT"
+      ],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "swipe_left",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "swipe_left",
+        "hand": "right"
+      }
+    },
+    {
+      "gesture": "SWIPE_RIGHT",
+      "command": "gesture.right",
+      "guide": "Next / select / rotate right",
+      "aliases": [
+        "SWIPT_RIGHT"
+      ],
+      "left": {
+        "type": "GESTURE",
+        "gesture": "swipe_right",
+        "hand": "left"
+      },
+      "right": {
+        "type": "GESTURE",
+        "gesture": "swipe_right",
+        "hand": "right"
+      }
+    }
+  ],
+  "appGestures": [
+    {
+      "app": "timer",
+      "gesture": "SWIPE_UP",
+      "command": "app.increase"
+    },
+    {
+      "app": "timer",
+      "gesture": "SWIPE_DOWN",
+      "command": "app.decrease"
+    },
+    {
+      "app": "timer",
+      "gesture": "SWIPE_LEFT",
+      "command": "app.previous"
+    },
+    {
+      "app": "timer",
+      "gesture": "SWIPE_RIGHT",
+      "command": "app.next"
+    },
+    {
+      "app": "flashcards",
+      "gesture": "SWIPE_LEFT",
+      "command": "app.previous"
+    },
+    {
+      "app": "flashcards",
+      "gesture": "SWIPE_RIGHT",
+      "command": "app.next"
+    },
+    {
+      "app": "flashcards",
+      "gesture": "SWIPE_UP",
+      "command": "app.reveal"
+    },
+    {
+      "app": "flashcards",
+      "gesture": "SWIPE_DOWN",
+      "command": "app.hide"
+    }
+  ],
+  "legacyGestures": [
+    {
+      "gesture": "ZOOM_IN",
+      "command": "settings.grow"
+    },
+    {
+      "gesture": "ZOOM_OUT",
+      "command": "settings.shrink"
+    }
+  ],
+  "gestureTransport": {
+    "protocol": "WebSocket (GestureReceiver connects to Mac)",
+    "port": 8765,
+    "example": {
+      "type": "GESTURE",
+      "gesture": "pinch_and_pull",
+      "hand": "left"
+    }
+  }
+}

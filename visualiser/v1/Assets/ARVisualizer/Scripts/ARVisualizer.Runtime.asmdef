@@ -1,0 +1,6 @@
+{
+  "name": "ARVisualizer.Runtime",
+  "rootNamespace": "ARVisualizer",
+  "references": ["Unity.XR.ARFoundation", "Unity.XR.ARSubsystems", "Unity.XR.CoreUtils", "Unity.InputSystem", "Unity.ugui", "Unity.Collections", "Unity.RenderPipelines.Core.Runtime", "Unity.RenderPipelines.Universal.Runtime"],
+  "autoReferenced": true
+}

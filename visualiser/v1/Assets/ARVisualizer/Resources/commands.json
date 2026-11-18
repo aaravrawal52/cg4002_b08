@@ -1,0 +1,356 @@
+{
+  "version": 2,
+  "transport": {
+    "protocol": "UDP",
+    "port": 7777,
+    "encoding": "UTF-8 JSON",
+    "example": {
+      "id": "unique-request-id",
+      "command": "left.ui.click",
+      "token": ""
+    }
+  },
+  "notes": [
+    "Each command has left and right variants. Unprefixed commands default to the right hand.",
+    "Alternative packet: {\"command\":\"ui.click\",\"hand\":\"left\"}. Conflicting hand selectors are rejected.",
+    "Left/right hand is separate from left/right mouse click: left.ui.rightclick means the left hand performs a right-click.",
+    "Placement, movement, adjustment and menus belong to a hand. A screen being adjusted, moved or browsed by one hand cannot be acquired by the other.",
+    "Shared commands affect the app or shared screen collection regardless of the issuing hand.",
+    "Untracked hands never borrow the other hand ray. Normal centre fallback waits through recognition and brief tracking gaps. Established identities follow motion through noisy Vision labels.",
+    "To correct an initial identity, show only the intended hand and use left.hand.calibrate or right.hand.calibrate. This resets both identity associations; the other hand reacquires when visible again.",
+    "Use a fresh id per action. Retry with the same id and socket; commands are deduplicated."
+  ],
+  "commands": [
+    {
+      "command": "pointer.on",
+      "category": "Pointer",
+      "description": "Enable this hand ray.",
+      "scope": "hand",
+      "left": {
+        "command": "left.pointer.on"
+      },
+      "right": {
+        "command": "right.pointer.on"
+      },
+      "aliases": []
+    },
+    {
+      "command": "pointer.off",
+      "category": "Pointer",
+      "description": "Disable this hand ray; fingertip touch remains active. Rejected in goggles.",
+      "scope": "hand",
+      "left": {
+        "command": "left.pointer.off"
+      },
+      "right": {
+        "command": "right.pointer.off"
+      },
+      "aliases": []
+    },
+    {
+      "command": "hand.calibrate",
+      "category": "Hand tracking",
+      "description": "Show only the intended hand, then assign it this identity. Rejects missing, stale or multiple visible hands. Identity lasts until tracking is lost for the configured memory period. Screens and pointer switches are unchanged.",
+      "scope": "hand identity",
+      "left": {
+        "command": "left.hand.calibrate"
+      },
+      "right": {
+        "command": "right.hand.calibrate"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.click",
+      "category": "Input",
+      "description": "Left-click at this hand ray.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.click"
+      },
+      "right": {
+        "command": "right.ui.click"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.rightclick",
+      "category": "Input",
+      "description": "Right-click at this hand ray, or go back in its menu.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.rightclick"
+      },
+      "right": {
+        "command": "right.ui.rightclick"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.press",
+      "category": "Input",
+      "description": "Hold this hand ray on a menu; move up/down to scroll.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.press"
+      },
+      "right": {
+        "command": "right.ui.press"
+      },
+      "aliases": []
+    },
+    {
+      "command": "ui.release",
+      "category": "Input",
+      "description": "Release this hand menu press.",
+      "scope": "hand",
+      "left": {
+        "command": "left.ui.release"
+      },
+      "right": {
+        "command": "right.ui.release"
+      },
+      "aliases": []
+    },
+    {
+      "command": "app.choose",
+      "category": "Apps",
+      "description": "Open the app chooser on the screen this hand points at.",
+      "scope": "hand",
+      "left": {
+        "command": "left.app.choose"
+      },
+      "right": {
+        "command": "right.app.choose"
+      },
+      "aliases": []
+    },
+    {
+      "command": "place.enter",
+      "category": "Placement",
+      "description": "Show surfaces and start this hand placement preview.",
+      "scope": "hand",
+      "left": {
+        "command": "left.place.enter"
+      },
+      "right": {
+        "command": "right.place.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "place.exit",
+      "category": "Placement",
+      "description": "Cancel this hand placement or move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.place.exit"
+      },
+      "right": {
+        "command": "right.place.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.place",
+      "category": "Placement",
+      "description": "Place a screen at this hand target, or confirm its active move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.screen.place"
+      },
+      "right": {
+        "command": "right.screen.place"
+      },
+      "aliases": [
+        "cube.place"
+      ]
+    },
+    {
+      "command": "move.enter",
+      "category": "Move",
+      "description": "Select this hand adjusted or pointed screen to move.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.enter"
+      },
+      "right": {
+        "command": "right.move.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "move.confirm",
+      "category": "Move",
+      "description": "Move the selected screen to this hand surface target.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.confirm"
+      },
+      "right": {
+        "command": "right.move.confirm"
+      },
+      "aliases": []
+    },
+    {
+      "command": "move.cancel",
+      "category": "Move",
+      "description": "Cancel this hand move, retaining the original screen position.",
+      "scope": "hand",
+      "left": {
+        "command": "left.move.cancel"
+      },
+      "right": {
+        "command": "right.move.cancel"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.enter",
+      "category": "Adjust",
+      "description": "Select this hand pointed screen for adjustment.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.enter"
+      },
+      "right": {
+        "command": "right.adjust.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.exit",
+      "category": "Adjust",
+      "description": "Release this hand adjusted screen.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.exit"
+      },
+      "right": {
+        "command": "right.adjust.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.grow",
+      "category": "Adjust",
+      "description": "Grow this hand selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.grow"
+      },
+      "right": {
+        "command": "right.adjust.grow"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.shrink",
+      "category": "Adjust",
+      "description": "Shrink this hand selected screen by one size step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.shrink"
+      },
+      "right": {
+        "command": "right.adjust.shrink"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.rotate.cw",
+      "category": "Adjust",
+      "description": "Rotate this hand selected screen clockwise by one step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.rotate.cw"
+      },
+      "right": {
+        "command": "right.adjust.rotate.cw"
+      },
+      "aliases": []
+    },
+    {
+      "command": "adjust.rotate.ccw",
+      "category": "Adjust",
+      "description": "Rotate this hand selected screen anticlockwise by one step.",
+      "scope": "hand",
+      "left": {
+        "command": "left.adjust.rotate.ccw"
+      },
+      "right": {
+        "command": "right.adjust.rotate.ccw"
+      },
+      "aliases": []
+    },
+    {
+      "command": "screen.undo",
+      "category": "Screens",
+      "description": "Cancel this hand pending move/placement; otherwise delete the most recently placed screen.",
+      "scope": "shared screens",
+      "left": {
+        "command": "left.screen.undo"
+      },
+      "right": {
+        "command": "right.screen.undo"
+      },
+      "aliases": [
+        "cube.undo"
+      ]
+    },
+    {
+      "command": "screens.clear",
+      "category": "Screens",
+      "description": "Delete all screens and cancel both hands pending placements and moves.",
+      "scope": "shared",
+      "left": {
+        "command": "left.screens.clear"
+      },
+      "right": {
+        "command": "right.screens.clear"
+      },
+      "aliases": [
+        "cubes.clear"
+      ]
+    },
+    {
+      "command": "goggle.enter",
+      "category": "Display",
+      "description": "Enter stereo goggles; both hand rays are locked on.",
+      "scope": "shared",
+      "left": {
+        "command": "left.goggle.enter"
+      },
+      "right": {
+        "command": "right.goggle.enter"
+      },
+      "aliases": []
+    },
+    {
+      "command": "goggle.exit",
+      "category": "Display",
+      "description": "Return to normal display and restore each hand pointer switch.",
+      "scope": "shared",
+      "left": {
+        "command": "left.goggle.exit"
+      },
+      "right": {
+        "command": "right.goggle.exit"
+      },
+      "aliases": []
+    },
+    {
+      "command": "status",
+      "category": "Status",
+      "description": "Read this hand target/modes and snapshots of both hands.",
+      "scope": "hand",
+      "left": {
+        "command": "left.status"
+      },
+      "right": {
+        "command": "right.status"
+      },
+      "aliases": []
+    }
+  ]
+}

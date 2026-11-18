@@ -1,0 +1,1 @@
+v3 is the latest iteration of the visualiser. Main app is in v3/Assets/ARVisualiser. See [v3/Assets/ARVisualizer/README.md](v3/Assets/ARVisualizer/README.md) for more information.

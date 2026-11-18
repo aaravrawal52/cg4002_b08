@@ -20,6 +20,8 @@ Start everything in this order. The Ultra96 server must be running before the ga
 
 ### 0. One-time setup
 
+- Download the code from the firebeetle folder and upload to a firebeetle board using the same connections as in the report(Hall sensors for left hand and flex sensors for right hand)
+
 - **Mac:** install the Python packages the gateway needs:
 
   ```bash

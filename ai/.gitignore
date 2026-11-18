@@ -1,0 +1,19 @@
+.claude/
+CLAUDE.md
+Vitis-AI/
+__pycache__/
+.venv
+
+dummy_dataset/
+dummy_dataset_tagged/
+Data/
+preprocessed_data/
+models/
+optuna.db
+best_params.json
+/deploy/crumple_and_toss.csv
+/indiv_subcomponent_submissions
+/dpu_ip
+# vitis_ai/ holds the Vitis AI quantise/compile workspace, including its data and model copies
+!vitis_ai/preprocessed_data/
+!vitis_ai/**/best_params.json

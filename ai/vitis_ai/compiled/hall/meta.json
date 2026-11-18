@@ -1,0 +1,8 @@
+{
+    "lib": "libvart-dpu-runner.so",
+    "filename": "compiled_model.xmodel",
+    "kernel": [
+        "subgraph_Sequential__0_bias"
+    ],
+    "target": "DPUCZDX8G_ISA1_B1600_0101000016010404"
+}
